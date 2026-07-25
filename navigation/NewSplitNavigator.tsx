@@ -1,9 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
+import {
+  useNavigation,
+  usePreventRemove,
+} from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { TouchableOpacity } from "react-native";
+import { useRef } from "react";
+import { Alert, TouchableOpacity } from "react-native";
 
 import { useSplitDraft } from "../contexts/SplitDraftContext";
+import { isSplitDraftDirty } from "../contexts/splitDraftReducer";
 import BillTotalScreen from "../screens/newSplit/BillTotalScreen";
 import ItemsScreen from "../screens/newSplit/ItemsScreen";
 import ModeStepScreen from "../screens/newSplit/ModeStepScreen";
@@ -13,6 +18,10 @@ import ReceiptSourceScreen from "../screens/newSplit/ReceiptSourceScreen";
 import ResultsScreen from "../screens/newSplit/ResultsScreen";
 import TaxTipScreen from "../screens/newSplit/TaxTipScreen";
 import { colors } from "../theme";
+import {
+  isSkipNewSplitDiscardConfirmationArmed,
+  skipNextNewSplitDiscardConfirmation,
+} from "./newSplitDiscardGuard";
 import { stackScreenOptions } from "./screenOptions";
 import type { NewSplitStackParamList } from "./types";
 
@@ -20,12 +29,11 @@ const Stack = createNativeStackNavigator<NewSplitStackParamList>();
 
 function CancelButton() {
   const navigation = useNavigation();
-  const { reset } = useSplitDraft();
 
   return (
     <TouchableOpacity
       onPress={() => {
-        reset();
+        // Triggers usePreventRemove on the NewSplit root screen when dirty.
         navigation.getParent()?.goBack();
       }}
       hitSlop={8}
@@ -38,10 +46,58 @@ function CancelButton() {
 }
 
 export default function NewSplitNavigator() {
+  const navigation = useNavigation();
+  const draft = useSplitDraft();
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const isPromptOpenRef = useRef(false);
+
+  const preventRemove =
+    isSplitDraftDirty(draft) && !isSkipNewSplitDiscardConfirmationArmed();
+
+  usePreventRemove(preventRemove, ({ data }) => {
+    if (isPromptOpenRef.current) {
+      return;
+    }
+
+    isPromptOpenRef.current = true;
+    Alert.alert(
+      "Discard this split?",
+      "Your progress will be lost.",
+      [
+        {
+          text: "Keep editing",
+          style: "cancel",
+          onPress: () => {
+            isPromptOpenRef.current = false;
+          },
+        },
+        {
+          text: "Discard",
+          style: "destructive",
+          onPress: () => {
+            isPromptOpenRef.current = false;
+            // Arm bypass + clear draft, then replay the original remove action.
+            skipNextNewSplitDiscardConfirmation();
+            draftRef.current.reset();
+            navigation.dispatch(data.action);
+          },
+        },
+      ],
+      {
+        cancelable: true,
+        onDismiss: () => {
+          isPromptOpenRef.current = false;
+        },
+      },
+    );
+  });
+
   return (
     <Stack.Navigator
       screenOptions={{
         ...stackScreenOptions,
+        headerBackButtonMenuEnabled: false,
         headerRight: () => <CancelButton />,
       }}
     >

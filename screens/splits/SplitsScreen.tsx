@@ -1,12 +1,18 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RefreshControl, StyleSheet, Text, View } from "react-native";
 
-import { Banner, EmptyState, Screen } from "../../components";
+import {
+  Banner,
+  EmptyState,
+  ListCard,
+  Screen,
+  SectionHeader,
+} from "../../components";
 import { SplitListItem } from "../../components/SplitListItem";
 import { useAuth } from "../../contexts/AuthContext";
 import { useSavedSplits } from "../../contexts/SavedSplitsContext";
 import type { SplitsStackParamList } from "../../navigation/types";
-import { colors, fontSize, spacing } from "../../theme";
+import { colors, fontWeight, spacing, typography } from "../../theme";
 import { formatCurrency } from "../../utils/format";
 
 type Props = NativeStackScreenProps<SplitsStackParamList, "SplitsList">;
@@ -33,6 +39,7 @@ export default function SplitsScreen({ navigation }: Props) {
     (sum, session) => sum + session.summary.finalTotal,
     0,
   );
+  const splitCount = savedSplits.sessions.length;
 
   return (
     <Screen
@@ -48,7 +55,7 @@ export default function SplitsScreen({ navigation }: Props) {
         <Banner tone="error" message={savedSplits.error} />
       ) : null}
 
-      {savedSplits.sessions.length === 0 ? (
+      {splitCount === 0 ? (
         <EmptyState
           icon="albums-outline"
           title="No saved splits yet"
@@ -56,15 +63,24 @@ export default function SplitsScreen({ navigation }: Props) {
         />
       ) : (
         <>
-          <View style={styles.summary}>
-            <Text style={styles.summaryText}>
-              {savedSplits.sessions.length}{" "}
-              {savedSplits.sessions.length === 1 ? "split" : "splits"}
-            </Text>
-            <Text style={styles.summaryTotal}>
-              {formatCurrency(combinedTotal)} total
-            </Text>
-          </View>
+          <SectionHeader title="Your splits" style={styles.sectionHeader} />
+
+          <ListCard style={styles.summaryCard}>
+            <View style={styles.summary}>
+              <View>
+                <Text style={styles.summaryLabel}>Saved</Text>
+                <Text style={styles.summaryValue}>
+                  {splitCount} {splitCount === 1 ? "split" : "splits"}
+                </Text>
+              </View>
+              <View style={styles.summaryTotalBlock}>
+                <Text style={styles.summaryLabel}>Combined</Text>
+                <Text style={styles.summaryTotal}>
+                  {formatCurrency(combinedTotal)}
+                </Text>
+              </View>
+            </View>
+          </ListCard>
 
           <View style={styles.list}>
             {savedSplits.sessions.map((session) => (
@@ -86,21 +102,34 @@ export default function SplitsScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  sectionHeader: {
+    marginBottom: spacing.md,
+  },
+  summaryCard: {
+    marginBottom: spacing.lg,
+  },
   summary: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: spacing.md,
+    alignItems: "flex-end",
   },
-  summaryText: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
+  summaryLabel: {
+    ...typography.caption,
+    marginBottom: spacing.xs,
+  },
+  summaryValue: {
+    ...typography.section,
+  },
+  summaryTotalBlock: {
+    alignItems: "flex-end",
   },
   summaryTotal: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
+    color: colors.accent,
+    fontSize: typography.section.fontSize,
+    fontWeight: fontWeight.bold,
+    lineHeight: typography.section.lineHeight,
   },
   list: {
-    gap: spacing.sm,
+    gap: spacing.md,
   },
 });

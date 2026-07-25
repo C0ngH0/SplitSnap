@@ -50,6 +50,20 @@ export const initialSplitDraftState: SplitDraftState = {
   savedStatus: null,
 };
 
+/** True when the wizard holds user-entered progress worth confirming before discard. */
+export function isSplitDraftDirty(state: SplitDraftState): boolean {
+  return (
+    state.people.length > 0 ||
+    state.items.length > 0 ||
+    state.billTotal.trim().length > 0 ||
+    state.tax.trim().length > 0 ||
+    state.customTip.trim().length > 0 ||
+    state.receiptImageUri != null ||
+    state.extractedReceipt != null ||
+    state.session != null
+  );
+}
+
 export type SplitDraftAction =
   | { type: "SET_MODE"; mode: SplitMode }
   | { type: "ADD_PERSON"; id: string; name: string }

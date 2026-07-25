@@ -11,6 +11,13 @@ import {
 
 import { colors, fontSize, fontWeight, radius, spacing } from "../theme";
 
+/**
+ * Variants:
+ * - primary: main action on a screen
+ * - accent: money / success emphasis (use sparingly)
+ * - outline / ghost: secondary / tertiary
+ * - danger: destructive only
+ */
 type ButtonVariant = "primary" | "accent" | "outline" | "danger" | "ghost";
 type ButtonSize = "md" | "lg";
 
@@ -54,24 +61,22 @@ export function Button({
       accessibilityState={{ disabled: !isInteractive, busy: loading }}
       accessibilityLabel={title}
     >
-      {loading ? (
-        <ActivityIndicator color={textColor} size="small" />
-      ) : (
-        <View style={styles.content}>
-          {icon ? (
-            <Ionicons name={icon} size={18} color={textColor} />
-          ) : null}
-          <Text
-            style={[
-              styles.label,
-              size === "lg" && styles.labelLarge,
-              { color: textColor },
-            ]}
-          >
-            {title}
-          </Text>
-        </View>
-      )}
+      <View style={styles.content}>
+        {loading ? (
+          <ActivityIndicator color={textColor} size="small" />
+        ) : icon ? (
+          <Ionicons name={icon} size={18} color={textColor} />
+        ) : null}
+        <Text
+          style={[
+            styles.label,
+            size === "lg" && styles.labelLarge,
+            { color: textColor },
+          ]}
+        >
+          {title}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -102,15 +107,16 @@ const TEXT_COLORS: Record<ButtonVariant, string> = {
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: radius.md,
-    paddingVertical: spacing.md + 2,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
+    minHeight: 44,
     alignItems: "center",
     justifyContent: "center",
   },
   large: {
-    borderRadius: radius.lg,
     paddingVertical: spacing.lg,
+    minHeight: 52,
   },
   content: {
     flexDirection: "row",
@@ -122,7 +128,7 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.bold,
   },
   labelLarge: {
-    fontSize: fontSize.xl,
+    fontSize: fontSize.lg,
   },
   disabled: {
     opacity: 0.5,

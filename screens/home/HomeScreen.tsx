@@ -1,15 +1,28 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
-import { Banner, Card, Screen } from "../../components";
+import {
+  Banner,
+  EmptyState,
+  ListCard,
+  Screen,
+  SectionHeader,
+} from "../../components";
 import { SplitListItem } from "../../components/SplitListItem";
 import { useAuth } from "../../contexts/AuthContext";
 import { useSavedSplits } from "../../contexts/SavedSplitsContext";
 import { useSplitDraft } from "../../contexts/SplitDraftContext";
 import type { HomeStackParamList } from "../../navigation/types";
-import { colors, fontSize, fontWeight, lineHeight, radius, spacing } from "../../theme";
+import {
+  colors,
+  fontWeight,
+  radius,
+  shadows,
+  spacing,
+  typography,
+} from "../../theme";
 
 type Props = NativeStackScreenProps<HomeStackParamList, "Home">;
 
@@ -33,87 +46,72 @@ export default function HomeScreen({}: Props) {
   return (
     <Screen edgeTop>
       <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.logo}>Tably</Text>
-          <Text style={styles.tagline}>Split bills. Fairly and easily.</Text>
-        </View>
+        <Text style={styles.logo}>Tably</Text>
+        <Text style={styles.tagline}>Split bills. Fairly and easily.</Text>
       </View>
 
-      <TouchableOpacity
-        style={styles.cta}
+      <ListCard
         onPress={startNewSplit}
-        activeOpacity={0.85}
-        accessibilityRole="button"
         accessibilityLabel="Start a new split"
+        style={styles.cta}
       >
-        <View style={styles.ctaIcon}>
-          <Ionicons name="camera" size={22} color={colors.primaryText} />
-        </View>
-        <View style={styles.ctaText}>
-          <Text style={styles.ctaTitle}>New Split</Text>
-          <Text style={styles.ctaSubtitle}>Scan a receipt or add manually</Text>
-        </View>
-        <Ionicons
-          name="chevron-forward"
-          size={20}
-          color={colors.primaryText}
-        />
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.secondaryCard}
-        onPress={openSplits}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-      >
-        <View style={styles.secondaryIcon}>
+        <View style={styles.ctaRow}>
+          <View style={styles.ctaIcon}>
+            <Ionicons name="camera" size={22} color={colors.primaryText} />
+          </View>
+          <View style={styles.ctaText}>
+            <Text style={styles.ctaTitle}>New Split</Text>
+            <Text style={styles.ctaSubtitle}>
+              Scan a receipt or add manually
+            </Text>
+          </View>
           <Ionicons
-            name="bookmark-outline"
-            size={18}
-            color={colors.accent}
+            name="chevron-forward"
+            size={20}
+            color={colors.primaryText}
           />
         </View>
-        <View style={styles.ctaText}>
-          <Text style={styles.secondaryTitle}>Saved Splits</Text>
-          <Text style={styles.secondarySubtitle}>
-            View your past splits
-          </Text>
-        </View>
-        <Ionicons
-          name="chevron-forward"
-          size={18}
-          color={colors.textMuted}
-        />
-      </TouchableOpacity>
+      </ListCard>
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Recent Splits</Text>
-        {recentSessions.length > 0 ? (
-          <TouchableOpacity onPress={openSplits}>
-            <Text style={styles.viewAll}>View all</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+      <ListCard
+        onPress={openSplits}
+        accessibilityLabel="Saved Splits"
+        style={styles.secondaryCard}
+      >
+        <View style={styles.secondaryRow}>
+          <View style={styles.ctaText}>
+            <Text style={styles.secondaryTitle}>Saved Splits</Text>
+            <Text style={styles.secondarySubtitle}>View your past splits</Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={colors.textMuted}
+          />
+        </View>
+      </ListCard>
+
+      <SectionHeader
+        title="Recent Splits"
+        actionLabel={recentSessions.length > 0 ? "View all" : undefined}
+        onAction={recentSessions.length > 0 ? openSplits : undefined}
+        style={styles.sectionHeader}
+      />
 
       {!authToken ? (
-        <Card>
-          <Text style={styles.guestTitle}>
-            {isGuest ? "You are browsing as a guest" : "Not signed in"}
-          </Text>
-          <Text style={styles.guestBody}>
-            Splits you calculate now are not saved. Create an account from the
-            Profile tab to keep them and sync across devices.
-          </Text>
-        </Card>
+        <EmptyState
+          icon="person-outline"
+          title={isGuest ? "You are browsing as a guest" : "Not signed in"}
+          description="Splits you calculate now are not saved. Create an account from the Profile tab to keep them and sync across devices."
+        />
       ) : savedSplits.error ? (
         <Banner tone="error" message={savedSplits.error} />
       ) : recentSessions.length === 0 ? (
-        <Card>
-          <Text style={styles.guestTitle}>No splits yet</Text>
-          <Text style={styles.guestBody}>
-            Scan a receipt and we will automatically extract the items for you.
-          </Text>
-        </Card>
+        <EmptyState
+          icon="receipt-outline"
+          title="No splits yet"
+          description="Scan a receipt and we will automatically extract the items for you."
+        />
       ) : (
         <View style={styles.list}>
           {recentSessions.map((session) => (
@@ -121,12 +119,12 @@ export default function HomeScreen({}: Props) {
               key={session.id}
               session={session}
               onPress={() =>
-                navigation
-                  .getParent()
-                  ?.navigate("SplitsTab", {
-                    screen: "SplitDetail",
-                    params: { sessionId: session.id },
-                  })
+                navigation.getParent()?.navigate("SplitsTab", {
+                  screen: "SplitDetail",
+                  params: { sessionId: session.id },
+                  // Keep SplitsList under detail so delete/back return to the list.
+                  initial: false,
+                })
               }
             />
           ))}
@@ -142,31 +140,24 @@ export default function HomeScreen({}: Props) {
 
 const styles = StyleSheet.create({
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: spacing.xxl,
-  },
-  headerText: {
-    flex: 1,
+    marginBottom: spacing.xl,
   },
   logo: {
-    color: colors.textPrimary,
-    fontSize: fontSize.display,
-    fontWeight: fontWeight.heavy,
+    ...typography.display,
   },
   tagline: {
-    color: colors.textMuted,
-    fontSize: fontSize.md,
-    marginTop: spacing.xs,
+    ...typography.caption,
+    marginTop: spacing.sm,
   },
   cta: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    ...shadows.card,
+  },
+  ctaRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-    backgroundColor: colors.primary,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
   },
   ctaIcon: {
     width: 44,
@@ -174,83 +165,47 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.16)",
   },
   ctaText: {
     flex: 1,
+    gap: spacing.xs,
   },
   ctaTitle: {
     color: colors.primaryText,
-    fontSize: fontSize.xl,
+    fontSize: typography.section.fontSize,
     fontWeight: fontWeight.bold,
   },
   ctaSubtitle: {
     color: "rgba(255,255,255,0.82)",
-    fontSize: fontSize.sm,
-    marginTop: spacing.xs / 2,
+    fontSize: typography.caption.fontSize,
   },
   secondaryCard: {
+    marginTop: spacing.md,
+  },
+  secondaryRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginTop: spacing.md,
-  },
-  secondaryIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surfaceSunken,
   },
   secondaryTitle: {
+    ...typography.body,
     color: colors.textPrimary,
-    fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
-  },
-  secondarySubtitle: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
-    marginTop: spacing.xs / 2,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: spacing.xxl,
-    marginBottom: spacing.md,
-  },
-  sectionTitle: {
-    color: colors.textPrimary,
-    fontSize: fontSize.xxl,
-    fontWeight: fontWeight.bold,
-  },
-  viewAll: {
-    color: colors.primaryLink,
-    fontSize: fontSize.md,
     fontWeight: fontWeight.semibold,
   },
+  secondarySubtitle: {
+    ...typography.caption,
+  },
+  sectionHeader: {
+    marginTop: spacing.xl,
+  },
   list: {
-    gap: spacing.sm,
-  },
-  guestTitle: {
-    color: colors.textPrimary,
-    fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
-    marginBottom: spacing.sm,
-  },
-  guestBody: {
-    color: colors.textMuted,
-    fontSize: fontSize.md,
-    lineHeight: lineHeight.md,
+    gap: spacing.md,
   },
   signedInAs: {
+    ...typography.caption,
     color: colors.textPlaceholder,
-    fontSize: fontSize.sm,
     textAlign: "center",
-    marginTop: spacing.xxl,
+    marginTop: spacing.xl,
   },
 });

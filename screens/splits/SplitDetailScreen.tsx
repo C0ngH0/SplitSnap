@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Share, StyleSheet, Text, View } from "react-native";
 
 import {
@@ -36,16 +36,25 @@ export default function SplitDetailScreen({ navigation, route }: Props) {
     cachedSession ?? null,
   );
   const [error, setError] = useState<string | null>(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   // The list endpoint already returns full sessions, so the cached copy is
   // rendered immediately and this only fills the gap on a cold deep link.
+  // After delete, refresh clears the cache while this screen is still mounted;
+  // keep the local session and skip refetching the deleted id.
   useEffect(() => {
     if (cachedSession) {
       setSession(cachedSession);
       return;
     }
 
+    if (sessionRef.current?.id === sessionId) {
+      return;
+    }
+
     let isActive = true;
+    setSession(null);
 
     async function loadSession() {
       try {
@@ -109,7 +118,7 @@ export default function SplitDetailScreen({ navigation, route }: Props) {
           onPress: async () => {
             try {
               await savedSplits.remove(sessionId);
-              navigation.goBack();
+              navigation.navigate("SplitsList");
             } catch {
               setError("Could not delete saved split.");
             }

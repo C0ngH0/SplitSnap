@@ -72,11 +72,7 @@ export default function ParticipantsScreen({ navigation }: Props) {
             title="Continue"
             size="lg"
             disabled={!hasEnoughPeople}
-            onPress={() =>
-              navigation.navigate(
-                draft.mode === "even" ? "BillTotal" : "Items",
-              )
-            }
+            onPress={() => navigation.navigate("Items")}
           />
         </>
       }

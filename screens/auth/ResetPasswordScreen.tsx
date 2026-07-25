@@ -63,14 +63,20 @@ export default function ResetPasswordScreen({ navigation, route }: Props) {
           maxLength={6}
           style={styles.code}
         />
-        <Input
-          label="New password"
-          placeholder="Choose a new password"
-          value={newPassword}
-          onChangeText={setNewPassword}
-          secureTextEntry
-          autoComplete="new-password"
-        />
+        <View>
+          <Input
+            label="New password"
+            placeholder="Choose a new password"
+            value={newPassword}
+            onChangeText={setNewPassword}
+            secureTextEntry
+            autoComplete="new-password"
+          />
+          {/* Exact copy of server/src/services/authService.ts normalizePassword. */}
+          <Text style={styles.passwordHint}>
+            Password must be at least 8 characters.
+          </Text>
+        </View>
         <Input
           label="Confirm new password"
           placeholder="Re-enter your new password"
@@ -118,5 +124,10 @@ const styles = StyleSheet.create({
     letterSpacing: 8,
     fontSize: fontSize.title,
     textAlign: "center",
+  },
+  passwordHint: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm,
+    marginTop: spacing.sm,
   },
 });

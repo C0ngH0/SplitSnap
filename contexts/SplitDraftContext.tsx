@@ -5,6 +5,7 @@ import {
   useContext,
   useMemo,
   useReducer,
+  useState,
   type ReactNode,
 } from "react";
 import { Alert, Share } from "react-native";
@@ -72,10 +73,14 @@ type SplitDraftContextValue = SplitDraftState & {
   calculate: () => boolean;
   shareResults: () => Promise<void>;
   saveCurrentSplit: () => Promise<boolean>;
+  /** True while a save request is in flight. */
+  isSaving: boolean;
   loadSavedSplit: (session: SplitSession) => void;
   setError: (message: string | null) => void;
   reset: () => void;
 };
+
+export const SPLIT_SAVED_SUCCESS_MESSAGE = "Split saved successfully.";
 
 const SplitDraftContext = createContext<SplitDraftContextValue | null>(null);
 
@@ -84,6 +89,7 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
     splitDraftReducer,
     initialSplitDraftState,
   );
+  const [isSaving, setIsSaving] = useState(false);
   const { save } = useSavedSplits();
 
   const itemsSubtotal = calculateItemsSubtotal(state.items);
@@ -280,14 +286,20 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
   );
 
   const calculate = useCallback(() => {
-    const parsedBillTotal = parseAmount(state.billTotal);
+    const itemsSubtotalAmount = calculateItemsSubtotal(state.items);
     const parsedTax = parseAmount(state.tax);
     const parsedTip = resolveTipAmount(
-      calculateItemsSubtotal(state.items),
+      itemsSubtotalAmount,
       state.tipMode,
       state.tipPercent,
       parseAmount(state.customTip),
     );
+    // Even mode still divides one final bill; items + tax form the pre-tip total.
+    const evenPreTipTotal = itemsSubtotalAmount + parsedTax;
+    const parsedBillTotal =
+      state.mode === "even"
+        ? evenPreTipTotal
+        : parseAmount(state.billTotal);
 
     const validationError = validateSplitInput(
       state.mode,
@@ -308,7 +320,7 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
     let result;
 
     if (state.mode === "even") {
-      result = calculateEvenSplit(parsedBillTotal, state.people);
+      result = calculateEvenSplit(evenPreTipTotal, state.people, parsedTip);
     } else if (state.mode === "itemized") {
       result = calculateItemizedSplit(
         state.items,
@@ -390,8 +402,13 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
   }, [state.session]);
 
   const saveCurrentSplit = useCallback(async () => {
-    if (!state.session) {
+    if (!state.session || isSaving) {
       return false;
+    }
+
+    // Already confirmed saved for this result — block accidental re-taps.
+    if (state.savedStatus === SPLIT_SAVED_SUCCESS_MESSAGE) {
+      return true;
     }
 
     const now = new Date().toISOString();
@@ -406,26 +423,36 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
       fallbackCustomTip: parseAmount(state.customTip),
     });
 
+    setIsSaving(true);
+    dispatch({ type: "SET_ERROR", message: null });
+
     try {
       const savedSession = await save(sessionToSave);
       // Adopt the server copy so its UUID drives a PUT on the next save
       // instead of creating a duplicate session.
       dispatch({ type: "SET_SESSION", session: savedSession });
-      dispatch({ type: "SET_SAVED_STATUS", message: "Split saved." });
+      dispatch({
+        type: "SET_SAVED_STATUS",
+        message: SPLIT_SAVED_SUCCESS_MESSAGE,
+      });
       return true;
     } catch (saveError) {
       console.error("[splitHistory] Failed to save split:", saveError);
       dispatch({ type: "SET_SAVED_STATUS", message: null });
       dispatch({ type: "SET_ERROR", message: "Could not save this split." });
       return false;
+    } finally {
+      setIsSaving(false);
     }
   }, [
     state.session,
+    state.savedStatus,
     state.extractedReceipt,
     state.tipMode,
     state.tipPercent,
     state.customTip,
     hasReceiptContext,
+    isSaving,
     save,
   ]);
 
@@ -465,6 +492,7 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
       calculate,
       shareResults,
       saveCurrentSplit,
+      isSaving,
       loadSavedSplit,
       setError,
       reset,
@@ -497,6 +525,7 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
       calculate,
       shareResults,
       saveCurrentSplit,
+      isSaving,
       loadSavedSplit,
       setError,
       reset,

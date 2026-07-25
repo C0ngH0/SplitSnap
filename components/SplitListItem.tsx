@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
-import { colors, fontSize, fontWeight, radius, spacing } from "../theme";
+import { colors, fontWeight, spacing, typography } from "../theme";
 import { formatCurrency, formatSavedDate } from "../utils/format";
 import type { SplitSession } from "../types/split";
+import { ListCard } from "./ListCard";
 
 type SplitListItemProps = {
   session: SplitSession;
@@ -11,70 +12,53 @@ type SplitListItemProps = {
 };
 
 export function SplitListItem({ session, onPress }: SplitListItemProps) {
+  const title = session.title || session.restaurantName || "Untitled split";
+
   return (
-    <TouchableOpacity
-      style={styles.container}
+    <ListCard
       onPress={onPress}
-      activeOpacity={0.8}
-      accessibilityRole="button"
+      accessibilityLabel={`${title}, ${formatCurrency(session.summary.finalTotal)}`}
     >
-      <View style={styles.iconBox}>
-        <Ionicons
-          name="restaurant-outline"
-          size={18}
-          color={colors.primaryInfo}
-        />
-      </View>
-      <View style={styles.text}>
-        <Text style={styles.title} numberOfLines={1}>
-          {session.title || session.restaurantName || "Untitled split"}
+      <View style={styles.row}>
+        <View style={styles.text}>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={styles.meta}>
+            {formatSavedDate(session.createdAt)} · {session.people.length}{" "}
+            {session.people.length === 1 ? "person" : "people"}
+          </Text>
+        </View>
+        <Text style={styles.total}>
+          {formatCurrency(session.summary.finalTotal)}
         </Text>
-        <Text style={styles.meta}>
-          {formatSavedDate(session.createdAt)} · {session.people.length}{" "}
-          {session.people.length === 1 ? "person" : "people"}
-        </Text>
+        <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
       </View>
-      <Text style={styles.total}>
-        {formatCurrency(session.summary.finalTotal)}
-      </Text>
-      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-    </TouchableOpacity>
+    </ListCard>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-  },
-  iconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surfaceSunken,
   },
   text: {
     flex: 1,
+    gap: spacing.xs,
   },
   title: {
+    ...typography.body,
     color: colors.textPrimary,
-    fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.semibold,
   },
   meta: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
-    marginTop: spacing.xs / 2,
+    ...typography.caption,
   },
   total: {
     color: colors.accent,
-    fontSize: fontSize.base,
+    fontSize: typography.section.fontSize,
     fontWeight: fontWeight.bold,
   },
 });

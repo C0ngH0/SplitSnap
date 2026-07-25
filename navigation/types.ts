@@ -42,6 +42,11 @@ export type RootStackParamList = {
   Auth: NavigatorScreenParams<AuthStackParamList>;
   Main: NavigatorScreenParams<MainTabParamList>;
   NewSplit: NavigatorScreenParams<NewSplitStackParamList>;
+  /**
+   * Guest "Sign in to save" modal only. Must not share the Auth route name —
+   * otherwise Continue as Guest keeps the logged-out Auth screen instead of Main.
+   */
+  AuthModal: NavigatorScreenParams<AuthStackParamList>;
 };
 
 declare global {

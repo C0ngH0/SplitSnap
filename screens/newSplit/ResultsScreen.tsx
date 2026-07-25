@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { CommonActions } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StyleSheet, Text, View } from "react-native";
 
@@ -9,12 +8,23 @@ import {
   Button,
   Card,
   Screen,
+  SectionHeader,
   SummaryRow,
 } from "../../components";
 import { useAuth } from "../../contexts/AuthContext";
-import { useSplitDraft } from "../../contexts/SplitDraftContext";
+import {
+  SPLIT_SAVED_SUCCESS_MESSAGE,
+  useSplitDraft,
+} from "../../contexts/SplitDraftContext";
+import { skipNextNewSplitDiscardConfirmation } from "../../navigation/newSplitDiscardGuard";
 import type { NewSplitStackParamList } from "../../navigation/types";
-import { colors, fontSize, fontWeight, radius, spacing } from "../../theme";
+import {
+  colors,
+  fontWeight,
+  radius,
+  spacing,
+  typography,
+} from "../../theme";
 import { formatCurrency } from "../../utils/format";
 import { MODE_LABELS } from "../../utils/labels";
 
@@ -22,14 +32,13 @@ type Props = NativeStackScreenProps<NewSplitStackParamList, "Results">;
 
 export default function ResultsScreen({ navigation }: Props) {
   const draft = useSplitDraft();
-  const { authToken, isGuest, exitGuest } = useAuth();
+  const { authToken, isGuest, beginAuthForSaveSplit } = useAuth();
   const session = draft.session;
 
   const closeWizard = () => {
+    skipNextNewSplitDiscardConfirmation();
     draft.reset();
-    navigation.getParent()?.dispatch(
-      CommonActions.navigate({ name: "Main" }),
-    );
+    navigation.getParent()?.goBack();
   };
 
   if (!session) {
@@ -44,6 +53,12 @@ export default function ResultsScreen({ navigation }: Props) {
   }
 
   const isBalanced = session.summary.difference === 0;
+  const saveSucceeded = draft.savedStatus === SPLIT_SAVED_SUCCESS_MESSAGE;
+  const saveButtonTitle = draft.isSaving
+    ? "Saving..."
+    : saveSucceeded
+      ? "Saved"
+      : "Save Split";
 
   return (
     <Screen
@@ -51,24 +66,33 @@ export default function ResultsScreen({ navigation }: Props) {
         <>
           {authToken ? (
             <Button
-              title="Save Split"
-              icon="bookmark-outline"
-              variant="accent"
+              title={saveButtonTitle}
+              icon={saveSucceeded ? "checkmark-circle" : "bookmark-outline"}
+              variant="primary"
               size="lg"
+              loading={draft.isSaving}
+              disabled={draft.isSaving || saveSucceeded}
               onPress={() => void draft.saveCurrentSplit()}
             />
           ) : (
             <Button
               title="Sign in to save"
               icon="log-in-outline"
-              variant="outline"
+              variant="primary"
+              size="lg"
               onPress={() => {
                 if (isGuest) {
-                  void exitGuest();
+                  beginAuthForSaveSplit();
                 }
               }}
             />
           )}
+          <Button
+            title="Share"
+            icon="share-outline"
+            variant="outline"
+            onPress={() => void draft.shareResults()}
+          />
           <Button title="Done" variant="ghost" onPress={closeWizard} />
         </>
       }
@@ -100,16 +124,7 @@ export default function ResultsScreen({ navigation }: Props) {
         />
       ) : null}
 
-      <Card style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Receipt Summary</Text>
-          <Button
-            title="Share"
-            icon="share-outline"
-            variant="outline"
-            onPress={() => void draft.shareResults()}
-          />
-        </View>
+      <Card style={styles.card} title="Receipt Summary">
         <SummaryRow
           label="Subtotal"
           value={formatCurrency(session.summary.subtotal)}
@@ -133,35 +148,37 @@ export default function ResultsScreen({ navigation }: Props) {
         />
       </Card>
 
-      <Text style={styles.sectionTitle}>What each person owes</Text>
+      <SectionHeader title="What each person owes" style={styles.sectionHeader} />
 
-      {session.personTotals.map((person) => (
-        <Card key={person.personId} style={styles.personCard}>
-          <View style={styles.personHeader}>
-            <Avatar name={person.name} />
-            <Text style={styles.personName} numberOfLines={1}>
-              {person.name}
-            </Text>
-            <Text style={styles.personAmount}>
-              {formatCurrency(person.finalAmount)}
-            </Text>
-          </View>
-          <View style={styles.personBreakdown}>
-            <SummaryRow
-              label="Food subtotal"
-              value={formatCurrency(person.foodSubtotal)}
-            />
-            <SummaryRow
-              label="Tax share"
-              value={formatCurrency(person.taxShare)}
-            />
-            <SummaryRow
-              label="Tip share"
-              value={formatCurrency(person.tipShare)}
-            />
-          </View>
-        </Card>
-      ))}
+      <View style={styles.personList}>
+        {session.personTotals.map((person) => (
+          <Card key={person.personId}>
+            <View style={styles.personHeader}>
+              <Avatar name={person.name} />
+              <Text style={styles.personName} numberOfLines={1}>
+                {person.name}
+              </Text>
+              <Text style={styles.personAmount}>
+                {formatCurrency(person.finalAmount)}
+              </Text>
+            </View>
+            <View style={styles.personBreakdown}>
+              <SummaryRow
+                label="Food subtotal"
+                value={formatCurrency(person.foodSubtotal)}
+              />
+              <SummaryRow
+                label="Tax share"
+                value={formatCurrency(person.taxShare)}
+              />
+              <SummaryRow
+                label="Tip share"
+                value={formatCurrency(person.tipShare)}
+              />
+            </View>
+          </Card>
+        ))}
+      </View>
     </Screen>
   );
 }
@@ -181,37 +198,21 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   heroTitle: {
-    color: colors.textPrimary,
-    fontSize: fontSize.display,
-    fontWeight: fontWeight.heavy,
+    ...typography.display,
+    color: colors.accent,
   },
   heroSubtitle: {
-    color: colors.textMuted,
-    fontSize: fontSize.md,
-    marginTop: spacing.xs,
+    ...typography.caption,
+    marginTop: spacing.sm,
   },
   card: {
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xl,
   },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  sectionHeader: {
     marginBottom: spacing.md,
   },
-  cardTitle: {
-    color: colors.textPrimary,
-    fontSize: fontSize.xxl,
-    fontWeight: fontWeight.bold,
-  },
-  sectionTitle: {
-    color: colors.textPrimary,
-    fontSize: fontSize.xxl,
-    fontWeight: fontWeight.bold,
-    marginBottom: spacing.md,
-  },
-  personCard: {
-    marginBottom: spacing.md,
+  personList: {
+    gap: spacing.md,
   },
   personHeader: {
     flexDirection: "row",
@@ -219,18 +220,19 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   personName: {
+    ...typography.body,
     flex: 1,
     color: colors.textPrimary,
-    fontSize: fontSize.lg,
     fontWeight: fontWeight.bold,
+    fontSize: typography.section.fontSize,
   },
   personAmount: {
     color: colors.accent,
-    fontSize: fontSize.lg,
+    fontSize: typography.section.fontSize,
     fontWeight: fontWeight.bold,
   },
   personBreakdown: {
-    marginTop: spacing.md,
+    marginTop: spacing.lg,
     paddingTop: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.border,

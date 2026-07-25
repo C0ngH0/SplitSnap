@@ -195,29 +195,38 @@ export function applyRoundingCorrection(
   return corrected;
 }
 
-/** Split one final bill total evenly across all participants. */
+/**
+ * Split a pre-tip bill total evenly, then distribute tip evenly on top.
+ * `total` is the amount before tip (tax may already be included in that figure).
+ */
 export function calculateEvenSplit(
   total: number,
   people: Person[],
+  tip: number = 0,
 ): Pick<SplitSession, "personTotals" | "summary"> {
-  const totalCents = toCents(total);
+  const preTipTotal = round2(total);
+  const tipAmount = round2(tip);
+  const finalTotal = round2(preTipTotal + tipAmount);
   const equalWeights = people.map(() => 1);
-  const shareCents = distributeCents(totalCents, equalWeights);
+  const foodCents = distributeCents(toCents(preTipTotal), equalWeights);
+  const tipCents = distributeCents(toCents(tipAmount), equalWeights);
 
   const personTotals = people.map((person, index) => ({
     personId: person.id,
     name: person.name,
-    foodSubtotal: fromCents(shareCents[index]),
+    foodSubtotal: fromCents(foodCents[index]),
     taxShare: 0,
-    tipShare: 0,
-    finalAmount: fromCents(shareCents[index]),
+    tipShare: fromCents(tipCents[index]),
+    finalAmount: round2(
+      fromCents(foodCents[index]) + fromCents(tipCents[index]),
+    ),
   }));
 
-  const corrected = applyRoundingCorrection(personTotals, total);
+  const corrected = applyRoundingCorrection(personTotals, finalTotal);
 
   return {
     personTotals: corrected,
-    summary: buildSummary(total, 0, 0, corrected),
+    summary: buildSummary(preTipTotal, 0, tipAmount, corrected),
   };
 }
 
@@ -365,14 +374,6 @@ export function validateSplitInput(
     return "Tip must be zero or greater.";
   }
 
-  if (mode === "even") {
-    if (billTotal <= 0) {
-      return "Enter the final bill total. It must be greater than $0.00.";
-    }
-
-    return null;
-  }
-
   if (items.length === 0) {
     return "Add at least one receipt item before calculating.";
   }
@@ -385,6 +386,11 @@ export function validateSplitInput(
   const unnamedItem = items.find((item) => item.name.trim().length === 0);
   if (unnamedItem) {
     return "Every receipt item must have a name. Edit or remove blank items.";
+  }
+
+  // Even mode uses items for the bill total only — no per-item assignments.
+  if (mode === "even") {
+    return null;
   }
 
   for (const item of items) {

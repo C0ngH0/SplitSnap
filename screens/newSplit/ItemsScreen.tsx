@@ -67,6 +67,7 @@ export default function ItemsScreen({ navigation }: Props) {
     draft.removeItem(itemId);
   };
 
+  const isEvenMode = draft.mode === "even";
   const unassignedCount = draft.items.filter(
     (item) => item.assignedTo.length === 0,
   ).length;
@@ -79,9 +80,11 @@ export default function ItemsScreen({ navigation }: Props) {
       stepKey="items"
       title="Receipt items"
       subtitle={
-        draft.mode === "itemized"
-          ? "Assign every item to exactly one person."
-          : "Tap everyone who shared each item."
+        isEvenMode
+          ? "Add or edit each line from the receipt. The total is split evenly later."
+          : draft.mode === "itemized"
+            ? "Assign every item to exactly one person."
+            : "Tap everyone who shared each item."
       }
       footer={
         <Button
@@ -104,13 +107,15 @@ export default function ItemsScreen({ navigation }: Props) {
             {draft.items.length === 1 ? "item" : "items"} ·{" "}
             {formatCurrency(draft.itemsSubtotal)}
           </Text>
-          {unassignedCount > 0 ? (
-            <Text style={styles.unassigned}>
-              {unassignedCount} unassigned
-            </Text>
-          ) : (
-            <Text style={styles.allAssigned}>All assigned</Text>
-          )}
+          {!isEvenMode ? (
+            unassignedCount > 0 ? (
+              <Text style={styles.unassigned}>
+                {unassignedCount} unassigned
+              </Text>
+            ) : (
+              <Text style={styles.allAssigned}>All assigned</Text>
+            )
+          ) : null}
         </View>
       ) : null}
 
@@ -118,7 +123,11 @@ export default function ItemsScreen({ navigation }: Props) {
         <EmptyState
           icon="receipt-outline"
           title="No items yet"
-          description="Add each line from the receipt, then assign it to whoever ordered it."
+          description={
+            isEvenMode
+              ? "Add each line from the receipt. Everyone will split the final total evenly."
+              : "Add each line from the receipt, then assign it to whoever ordered it."
+          }
         />
       ) : (
         <View style={styles.list}>
@@ -154,7 +163,12 @@ export default function ItemsScreen({ navigation }: Props) {
               </View>
             ) : (
               <View key={item.id} style={styles.itemCard}>
-                <View style={styles.itemHeader}>
+                <View
+                  style={[
+                    styles.itemHeader,
+                    isEvenMode ? styles.itemHeaderEven : null,
+                  ]}
+                >
                   <Text style={styles.itemName} numberOfLines={2}>
                     {item.name}
                   </Text>
@@ -187,25 +201,31 @@ export default function ItemsScreen({ navigation }: Props) {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.assignmentLabel}>{assignmentLabel}</Text>
-                {draft.people.length === 0 ? (
-                  <Text style={styles.noPeople}>
-                    Go back and add participants first.
-                  </Text>
-                ) : (
-                  <View style={styles.chips}>
-                    {draft.people.map((person) => (
-                      <Chip
-                        key={person.id}
-                        label={person.name}
-                        selected={item.assignedTo.includes(person.id)}
-                        onPress={() =>
-                          draft.toggleAssignment(item.id, person.id)
-                        }
-                      />
-                    ))}
-                  </View>
-                )}
+                {!isEvenMode ? (
+                  <>
+                    <Text style={styles.assignmentLabel}>
+                      {assignmentLabel}
+                    </Text>
+                    {draft.people.length === 0 ? (
+                      <Text style={styles.noPeople}>
+                        Go back and add participants first.
+                      </Text>
+                    ) : (
+                      <View style={styles.chips}>
+                        {draft.people.map((person) => (
+                          <Chip
+                            key={person.id}
+                            label={person.name}
+                            selected={item.assignedTo.includes(person.id)}
+                            onPress={() =>
+                              draft.toggleAssignment(item.id, person.id)
+                            }
+                          />
+                        ))}
+                      </View>
+                    )}
+                  </>
+                ) : null}
               </View>
             ),
           )}
@@ -293,6 +313,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.md,
     marginBottom: spacing.md,
+  },
+  itemHeaderEven: {
+    marginBottom: 0,
   },
   itemName: {
     flex: 1,

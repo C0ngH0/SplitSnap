@@ -1,17 +1,20 @@
 /**
  * Design tokens for Tably.
  *
- * Every value here is lifted verbatim from the original single-screen
- * StyleSheet so the redesign inherits the existing palette exactly.
+ * Color hierarchy:
+ * - primary: main actions (Continue, Save, New Split)
+ * - accent: money, success, and positive totals
+ * - outline / ghost: secondary actions
+ * - danger: destructive only
  */
 
 export const colors = {
-  /** App background and sunken surfaces inside cards. */
-  background: "#0f172a",
-  /** Raised card surface. */
-  surface: "#1e293b",
-  /** Inset surface sitting on top of a card. */
-  surfaceSunken: "#0f172a",
+  /** App canvas — true black. */
+  background: "#000000",
+  /** Raised card / list surface (charcoal, not pure black). */
+  surface: "#111827",
+  /** Inset wells on cards (inputs, chips). */
+  surfaceSunken: "#030712",
 
   border: "#334155",
   borderStrong: "#475569",
@@ -46,21 +49,24 @@ export const colors = {
   neutralButton: "#334155",
 } as const;
 
+/** 8-point spacing scale: 4, 8, 12, 16, 24, 32. */
 export const spacing = {
   xs: 4,
   sm: 8,
   md: 12,
   lg: 16,
-  xl: 20,
-  xxl: 24,
+  xl: 24,
+  xxl: 32,
+  /** @deprecated Use `xxl`. Kept so untouched screens keep compiling. */
   xxxl: 32,
 } as const;
 
 export const radius = {
-  sm: 10,
+  sm: 8,
   md: 12,
+  /** Standard card / list-card radius. */
   lg: 16,
-  xl: 20,
+  xl: 24,
   pill: 999,
 } as const;
 
@@ -77,17 +83,66 @@ export const fontSize = {
 } as const;
 
 export const fontWeight = {
-  regular: "400",
-  medium: "500",
-  semibold: "600",
-  bold: "700",
-  heavy: "800",
-} as const;
+  regular: "400" as const,
+  medium: "500" as const,
+  semibold: "600" as const,
+  bold: "700" as const,
+  heavy: "800" as const,
+};
 
 export const lineHeight = {
   sm: 18,
-  md: 20,
-  lg: 22,
+  md: 22,
+  lg: 28,
+  display: 38,
+} as const;
+
+/**
+ * Typography roles (system font). Prefer these over one-off fontSize picks
+ * in screens touched by the polish pass.
+ */
+export const typography = {
+  display: {
+    fontSize: fontSize.display,
+    fontWeight: fontWeight.heavy,
+    lineHeight: lineHeight.display,
+    color: colors.textPrimary,
+  },
+  title: {
+    fontSize: fontSize.title,
+    fontWeight: fontWeight.bold,
+    lineHeight: lineHeight.lg,
+    color: colors.textPrimary,
+  },
+  section: {
+    fontSize: fontSize.xxl,
+    fontWeight: fontWeight.bold,
+    lineHeight: lineHeight.lg,
+    color: colors.textPrimary,
+  },
+  body: {
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.regular,
+    lineHeight: lineHeight.md,
+    color: colors.textBody,
+  },
+  caption: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.regular,
+    lineHeight: lineHeight.sm,
+    color: colors.textMuted,
+  },
+} as const;
+
+/** Restrained depth for raised cards. */
+export const shadows = {
+  card: {
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 2,
+  },
 } as const;
 
 export type Colors = typeof colors;

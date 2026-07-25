@@ -7,7 +7,13 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import { colors, fontSize, fontWeight, lineHeight, radius, spacing } from "../theme";
+import {
+  colors,
+  radius,
+  shadows,
+  spacing,
+  typography,
+} from "../theme";
 
 type CardProps = {
   children?: ReactNode;
@@ -33,24 +39,23 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.card,
   },
   sunken: {
     backgroundColor: colors.surfaceSunken,
-    borderRadius: radius.md,
-    padding: spacing.md,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
   },
   title: {
-    color: colors.textPrimary,
-    fontSize: fontSize.xxl,
-    fontWeight: fontWeight.bold,
+    ...typography.section,
     marginBottom: spacing.md,
   },
   hint: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
-    lineHeight: lineHeight.sm,
+    ...typography.caption,
     marginTop: -spacing.sm,
     marginBottom: spacing.md,
   },

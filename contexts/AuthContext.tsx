@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -17,11 +18,17 @@ import {
 } from "../services/authApi";
 import {
   clearAuthToken,
+  clearAuthUser,
   getStoredAuthToken,
+  getStoredAuthUser,
   getStoredGuestMode,
   storeAuthToken,
+  storeAuthUser,
   storeGuestMode,
 } from "../services/authStorage";
+
+/** Guest Results → auth, then return to the same Results to save. */
+export type PendingAuthAction = "returnToSaveSplit";
 
 type AuthContextValue = {
   authToken: string | null;
@@ -29,6 +36,8 @@ type AuthContextValue = {
   /** False until the persisted token has been read, so we can gate on a splash. */
   isAuthReady: boolean;
   isGuest: boolean;
+  /** Set while a guest authenticates without leaving the New Split wizard. */
+  pendingAuthAction: PendingAuthAction | null;
   isSubmitting: boolean;
   status: string | null;
   error: string | null;
@@ -45,6 +54,13 @@ type AuthContextValue = {
   continueAsGuest: () => Promise<void>;
   /** Sends a guest back to the welcome screen so they can sign in. */
   exitGuest: () => Promise<void>;
+  /**
+   * Opens auth for saving a completed guest split without clearing guest mode
+   * or resetting the draft. Cleared after a successful return to Results, or
+   * if the user dismisses auth.
+   */
+  beginAuthForSaveSplit: () => void;
+  clearPendingAuthAction: () => void;
   setStatus: (message: string | null) => void;
   setError: (message: string | null) => void;
   clearMessages: () => void;
@@ -57,18 +73,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isGuest, setIsGuest] = useState(false);
+  const [pendingAuthAction, setPendingAuthAction] =
+    useState<PendingAuthAction | null>(null);
+  const pendingAuthActionRef = useRef(pendingAuthAction);
+  pendingAuthActionRef.current = pendingAuthAction;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadPersistedSession() {
-      const [storedToken, storedGuestMode] = await Promise.all([
+      const [storedToken, storedUser, storedGuestMode] = await Promise.all([
         getStoredAuthToken(),
+        getStoredAuthUser(),
         getStoredGuestMode(),
       ]);
 
       setAuthToken(storedToken);
+      // Profile/home identity comes from user state; restore it with the token
+      // so cold start does not leave a signed-in shell with a blank profile.
+      setUser(storedToken ? storedUser : null);
       setIsGuest(storedGuestMode);
       setIsAuthReady(true);
     }
@@ -84,11 +108,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleAuthSuccess = useCallback(
     async (token: string, nextUser: AuthUser, message: string) => {
       await storeAuthToken(token);
+      await storeAuthUser(nextUser);
       await storeGuestMode(false);
       setAuthToken(token);
       setUser(nextUser);
       setIsGuest(false);
-      setStatus(message);
+      // Pending save-sign-in dismisses AuthModal immediately — skip the banner.
+      setStatus(
+        pendingAuthActionRef.current === "returnToSaveSplit" ? null : message,
+      );
       setError(null);
     },
     [],
@@ -142,10 +170,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await clearAuthToken();
+    await clearAuthUser();
     await storeGuestMode(false);
     setAuthToken(null);
     setUser(null);
     setIsGuest(false);
+    setPendingAuthAction(null);
     setStatus("Logged out.");
     setError(null);
   }, []);
@@ -193,7 +223,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (resetError) {
         console.error("[auth] Reset password failed:", resetError);
         setStatus(null);
-        setError("Could not reset password. Check the code and new password.");
+        setError(
+          resetError instanceof Error
+            ? resetError.message
+            : "Could not reset password. Check the code and new password.",
+        );
         return false;
       } finally {
         setIsSubmitting(false);
@@ -212,8 +246,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const exitGuest = useCallback(async () => {
     await storeGuestMode(false);
     setIsGuest(false);
+    setPendingAuthAction(null);
     setStatus(null);
     setError(null);
+  }, []);
+
+  const beginAuthForSaveSplit = useCallback(() => {
+    setPendingAuthAction("returnToSaveSplit");
+    setStatus(null);
+    setError(null);
+  }, []);
+
+  const clearPendingAuthAction = useCallback(() => {
+    setPendingAuthAction(null);
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -222,6 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isAuthReady,
       isGuest,
+      pendingAuthAction,
       isSubmitting,
       status,
       error,
@@ -232,6 +278,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       submitPasswordReset,
       continueAsGuest,
       exitGuest,
+      beginAuthForSaveSplit,
+      clearPendingAuthAction,
       setStatus,
       setError,
       clearMessages,
@@ -241,6 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isAuthReady,
       isGuest,
+      pendingAuthAction,
       isSubmitting,
       status,
       error,
@@ -251,6 +300,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       submitPasswordReset,
       continueAsGuest,
       exitGuest,
+      beginAuthForSaveSplit,
+      clearPendingAuthAction,
       clearMessages,
     ],
   );

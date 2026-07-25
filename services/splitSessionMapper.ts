@@ -40,13 +40,27 @@ function mapDtoReceiptItems(dto: SplitSessionDto): ReceiptItem[] {
   }));
 }
 
+function evenPreTipTotal(dto: SplitSessionDto): number {
+  const tip = valueOrZero(dto.tip);
+  const subtotal = valueOrZero(dto.subtotal);
+  if (subtotal > 0) {
+    return subtotal;
+  }
+
+  return Math.max(valueOrZero(dto.total) - tip, 0);
+}
+
 function calculateSessionResult(
   dto: SplitSessionDto,
   people: Person[],
   items: ReceiptItem[],
 ): Pick<SplitSession, "personTotals" | "summary"> {
   if (dto.mode === "even") {
-    return calculateEvenSplit(valueOrZero(dto.total), people);
+    return calculateEvenSplit(
+      evenPreTipTotal(dto),
+      people,
+      valueOrZero(dto.tip),
+    );
   }
 
   if (dto.mode === "itemized") {
@@ -84,7 +98,12 @@ export function apiDtoToSplitSession(dto: SplitSessionDto): SplitSession {
   const items = mapDtoReceiptItems(dto);
   const result = calculateSessionResult(dto, people, items);
   const tip = valueOrZero(dto.tip);
-  const inferredTipPercent = inferTipPercent(valueOrZero(dto.subtotal), tip);
+  const preTipTotal =
+    dto.mode === "even" ? evenPreTipTotal(dto) : valueOrZero(dto.subtotal);
+  const inferredTipPercent = inferTipPercent(
+    dto.mode === "even" ? preTipTotal : valueOrZero(dto.subtotal),
+    tip,
+  );
 
   return {
     id: dto.id,
@@ -95,7 +114,9 @@ export function apiDtoToSplitSession(dto: SplitSessionDto): SplitSession {
     mode: dto.mode,
     people,
     items,
-    billTotal: valueOrZero(dto.total),
+    // Even drafts edit the pre-tip bill; other modes keep prior total mapping.
+    billTotal:
+      dto.mode === "even" ? preTipTotal : valueOrZero(dto.total),
     tax: valueOrZero(dto.tax),
     tip,
     tipMode: inferredTipPercent === null ? "fixed" : "percentage",
