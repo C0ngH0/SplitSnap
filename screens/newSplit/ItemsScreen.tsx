@@ -9,12 +9,19 @@ import {
   Chip,
   EmptyState,
   Input,
+  QuantityStepper,
 } from "../../components";
 import { useSplitDraft } from "../../contexts/SplitDraftContext";
 import type { NewSplitStackParamList } from "../../navigation/types";
 import type { ReceiptItem } from "../../types/split";
 import { colors, fontSize, fontWeight, radius, spacing } from "../../theme";
 import { formatCurrency } from "../../utils/format";
+import {
+  assignedUnitCount,
+  getIndividualQuantity,
+  isParticipantAssigned,
+  remainingUnitCount,
+} from "../../utils/itemAllocations";
 import { WizardStep } from "./WizardStep";
 
 type Props = NativeStackScreenProps<NewSplitStackParamList, "Items">;
@@ -23,31 +30,35 @@ export default function ItemsScreen({ navigation }: Props) {
   const draft = useSplitDraft();
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
+  const [quantity, setQuantity] = useState("1");
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [editingPrice, setEditingPrice] = useState("");
+  const [editingQuantity, setEditingQuantity] = useState("1");
 
-  // The import banner has done its job once the user leaves this step.
   const { clearImportMessage } = draft;
   useEffect(() => clearImportMessage, [clearImportMessage]);
 
   const addItem = () => {
-    draft.addItem(name, price);
+    draft.addItem(name, price, quantity);
     setName("");
     setPrice("");
+    setQuantity("1");
   };
 
   const startEditing = (item: ReceiptItem) => {
     setEditingId(item.id);
     setEditingName(item.name);
-    setEditingPrice(item.price.toFixed(2));
+    setEditingPrice(item.totalPrice.toFixed(2));
+    setEditingQuantity(String(item.quantity));
   };
 
   const cancelEditing = () => {
     setEditingId(null);
     setEditingName("");
     setEditingPrice("");
+    setEditingQuantity("1");
   };
 
   const saveEdit = () => {
@@ -55,7 +66,9 @@ export default function ItemsScreen({ navigation }: Props) {
       return;
     }
 
-    draft.updateItem(editingId, editingName, editingPrice);
+    draft.updateItem(editingId, editingName, editingPrice, {
+      quantity: editingQuantity,
+    });
     cancelEditing();
   };
 
@@ -68,12 +81,11 @@ export default function ItemsScreen({ navigation }: Props) {
   };
 
   const isEvenMode = draft.mode === "even";
-  const unassignedCount = draft.items.filter(
-    (item) => item.assignedTo.length === 0,
+  const isItemized = draft.mode === "itemized";
+  const isHybrid = draft.mode === "hybrid";
+  const incompleteCount = draft.items.filter(
+    (item) => remainingUnitCount(item) > 0,
   ).length;
-
-  const assignmentLabel =
-    draft.mode === "itemized" ? "Assigned to" : "Shared with";
 
   return (
     <WizardStep
@@ -82,9 +94,9 @@ export default function ItemsScreen({ navigation }: Props) {
       subtitle={
         isEvenMode
           ? "Add or edit each line from the receipt. The total is split evenly later."
-          : draft.mode === "itemized"
-            ? "Assign every item to exactly one person."
-            : "Tap everyone who shared each item."
+          : isItemized
+            ? "Assign every unit to exactly one person."
+            : "Assign individual units, then share any remainder."
       }
       footer={
         <Button
@@ -108,9 +120,9 @@ export default function ItemsScreen({ navigation }: Props) {
             {formatCurrency(draft.itemsSubtotal)}
           </Text>
           {!isEvenMode ? (
-            unassignedCount > 0 ? (
+            incompleteCount > 0 ? (
               <Text style={styles.unassigned}>
-                {unassignedCount} unassigned
+                {incompleteCount} incomplete
               </Text>
             ) : (
               <Text style={styles.allAssigned}>All assigned</Text>
@@ -126,7 +138,7 @@ export default function ItemsScreen({ navigation }: Props) {
           description={
             isEvenMode
               ? "Add each line from the receipt. Everyone will split the final total evenly."
-              : "Add each line from the receipt, then assign it to whoever ordered it."
+              : "Add each line from the receipt, then assign units to participants."
           }
         />
       ) : (
@@ -141,9 +153,15 @@ export default function ItemsScreen({ navigation }: Props) {
                   autoFocus
                 />
                 <Input
+                  value={editingQuantity}
+                  onChangeText={setEditingQuantity}
+                  placeholder="Quantity"
+                  keyboardType="number-pad"
+                />
+                <Input
                   value={editingPrice}
                   onChangeText={setEditingPrice}
-                  placeholder="Item price"
+                  placeholder="Total price"
                   keyboardType="decimal-pad"
                 />
                 <View style={styles.editActions}>
@@ -169,12 +187,20 @@ export default function ItemsScreen({ navigation }: Props) {
                     isEvenMode ? styles.itemHeaderEven : null,
                   ]}
                 >
-                  <Text style={styles.itemName} numberOfLines={2}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.itemPrice}>
-                    {formatCurrency(item.price)}
-                  </Text>
+                  <View style={styles.itemTitleBlock}>
+                    <Text style={styles.itemName} numberOfLines={2}>
+                      {item.name}
+                    </Text>
+                    <Text style={styles.itemMeta}>
+                      {item.quantity} × {formatCurrency(item.unitPrice)} ·{" "}
+                      {formatCurrency(item.totalPrice)}
+                    </Text>
+                    {!isEvenMode ? (
+                      <Text style={styles.itemProgress}>
+                        {assignedUnitCount(item)} of {item.quantity} assigned
+                      </Text>
+                    ) : null}
+                  </View>
                   <TouchableOpacity
                     onPress={() => startEditing(item)}
                     accessibilityRole="button"
@@ -201,30 +227,110 @@ export default function ItemsScreen({ navigation }: Props) {
                   </TouchableOpacity>
                 </View>
 
-                {!isEvenMode ? (
+                {!isEvenMode && draft.people.length === 0 ? (
+                  <Text style={styles.noPeople}>
+                    Go back and add participants first.
+                  </Text>
+                ) : null}
+
+                {!isEvenMode && draft.people.length > 0 && item.quantity === 1 ? (
                   <>
                     <Text style={styles.assignmentLabel}>
-                      {assignmentLabel}
+                      {isItemized ? "Assigned to" : "Shared with"}
                     </Text>
-                    {draft.people.length === 0 ? (
-                      <Text style={styles.noPeople}>
-                        Go back and add participants first.
-                      </Text>
-                    ) : (
-                      <View style={styles.chips}>
-                        {draft.people.map((person) => (
-                          <Chip
-                            key={person.id}
-                            label={person.name}
-                            selected={item.assignedTo.includes(person.id)}
-                            onPress={() =>
-                              draft.toggleAssignment(item.id, person.id)
-                            }
-                          />
-                        ))}
-                      </View>
-                    )}
+                    <View style={styles.chips}>
+                      {draft.people.map((person) => (
+                        <Chip
+                          key={person.id}
+                          label={person.name}
+                          selected={isParticipantAssigned(item, person.id)}
+                          onPress={() =>
+                            draft.toggleAssignment(item.id, person.id)
+                          }
+                        />
+                      ))}
+                    </View>
                   </>
+                ) : null}
+
+                {!isEvenMode && draft.people.length > 0 && item.quantity > 1 ? (
+                  <View style={styles.quantityAssign}>
+                    <Text style={styles.assignmentLabel}>
+                      Individual units
+                    </Text>
+                    {draft.people.map((person) => (
+                      <QuantityStepper
+                        key={`${item.id}-${person.id}`}
+                        label={person.name}
+                        value={getIndividualQuantity(item, person.id)}
+                        min={0}
+                        max={
+                          item.quantity -
+                          (item.sharedAllocation?.quantity ?? 0) -
+                          item.individualAllocations
+                            .filter(
+                              (allocation) =>
+                                allocation.participantId !== person.id,
+                            )
+                            .reduce(
+                              (sum, allocation) => sum + allocation.quantity,
+                              0,
+                            )
+                        }
+                        onChange={(value) =>
+                          draft.setIndividualQuantity(
+                            item.id,
+                            person.id,
+                            value,
+                          )
+                        }
+                      />
+                    ))}
+
+                    {isHybrid ? (
+                      <>
+                        <Text style={[styles.assignmentLabel, styles.sharedLabel]}>
+                          Shared remainder
+                        </Text>
+                        <QuantityStepper
+                          label="Shared units"
+                          value={item.sharedAllocation?.quantity ?? 0}
+                          min={0}
+                          max={
+                            item.quantity -
+                            item.individualAllocations.reduce(
+                              (sum, allocation) => sum + allocation.quantity,
+                              0,
+                            )
+                          }
+                          onChange={(value) =>
+                            draft.setSharedQuantity(item.id, value)
+                          }
+                        />
+                        {(item.sharedAllocation?.quantity ?? 0) > 0 ? (
+                          <View style={styles.chips}>
+                            {draft.people.map((person) => (
+                              <Chip
+                                key={`shared-${item.id}-${person.id}`}
+                                label={person.name}
+                                selected={Boolean(
+                                  item.sharedAllocation?.participantIds.includes(
+                                    person.id,
+                                  ),
+                                )}
+                                onPress={() =>
+                                  draft.toggleSharedParticipant(
+                                    item.id,
+                                    person.id,
+                                  )
+                                }
+                              />
+                            ))}
+                          </View>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </View>
                 ) : null}
               </View>
             ),
@@ -242,7 +348,14 @@ export default function ItemsScreen({ navigation }: Props) {
             autoFocus
           />
           <Input
-            label="Item price"
+            label="Quantity"
+            placeholder="1"
+            value={quantity}
+            onChangeText={setQuantity}
+            keyboardType="number-pad"
+          />
+          <Input
+            label="Total price"
             placeholder="e.g. 18.50"
             value={price}
             onChangeText={setPrice}
@@ -310,28 +423,38 @@ const styles = StyleSheet.create({
   },
   itemHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: spacing.md,
     marginBottom: spacing.md,
   },
   itemHeaderEven: {
     marginBottom: 0,
   },
-  itemName: {
+  itemTitleBlock: {
     flex: 1,
+    gap: spacing.xs,
+  },
+  itemName: {
     color: colors.textPrimary,
     fontSize: fontSize.base,
     fontWeight: fontWeight.semibold,
   },
-  itemPrice: {
+  itemMeta: {
     color: colors.textBody,
-    fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontSize: fontSize.sm,
+  },
+  itemProgress: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
   },
   assignmentLabel: {
     color: colors.textMuted,
     fontSize: fontSize.sm,
     marginBottom: spacing.sm,
+  },
+  sharedLabel: {
+    marginTop: spacing.md,
   },
   noPeople: {
     color: colors.textPlaceholder,
@@ -340,6 +463,9 @@ const styles = StyleSheet.create({
   chips: {
     flexDirection: "row",
     flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  quantityAssign: {
     gap: spacing.sm,
   },
   editCard: {

@@ -3,6 +3,7 @@ import type {
   ExtractedReceiptItem,
   ReceiptValidation,
 } from "../types/receipt";
+import { buildExtractedItem } from "./receiptQuantityParser";
 import type { DetectedReceiptField } from "./textractService";
 
 const MISMATCH_THRESHOLD = 0.05;
@@ -87,7 +88,7 @@ function hasStructuredData(receipt: ExtractedReceipt): boolean {
 function buildReceiptValidation(receipt: ExtractedReceipt): ReceiptValidation {
   const warnings: string[] = [];
   const itemSubtotal = roundCurrency(
-    receipt.items.reduce((sum, item) => sum + item.price, 0),
+    receipt.items.reduce((sum, item) => sum + item.totalPrice, 0),
   );
   const expectedTotal = roundCurrency(itemSubtotal + receipt.tax);
   const difference =
@@ -209,7 +210,7 @@ function parseItemLine(line: string): ExtractedReceiptItem | null {
     return null;
   }
 
-  return { name, price };
+  return buildExtractedItem(name, price);
 }
 
 function parseRestaurantName(lines: string[]): string {
@@ -288,6 +289,20 @@ function isIgnoredPriceField(field: DetectedReceiptField): boolean {
   );
 }
 
+function isQuantityField(field: DetectedReceiptField): boolean {
+  const normalized = normalizeFieldName(field.name);
+  return normalized === "QUANTITY" || normalized === "QTY";
+}
+
+function isUnitPriceField(field: DetectedReceiptField): boolean {
+  const normalized = normalizeFieldName(field.name);
+  return (
+    normalized === "UNIT_PRICE" ||
+    normalized === "UNITPRICE" ||
+    normalized === "PRICE_PER_UNIT"
+  );
+}
+
 function parseStructuredItemsByRow(
   fields: DetectedReceiptField[],
 ): ExtractedReceiptItem[] {
@@ -309,6 +324,8 @@ function parseStructuredItemsByRow(
     const priceField = rowFields.find(
       (field) => isPriceField(field) && !isIgnoredPriceField(field),
     );
+    const quantityField = rowFields.find(isQuantityField);
+    const unitPriceField = rowFields.find(isUnitPriceField);
 
     if (!itemField || !priceField) {
       continue;
@@ -316,9 +333,22 @@ function parseStructuredItemsByRow(
 
     const name = normalizeLine(itemField.value);
     const price = parsePrice(priceField.value);
+    const structuredQuantity = quantityField
+      ? Number.parseInt(quantityField.value.replace(/[^\d]/g, ""), 10)
+      : null;
+    const structuredUnitPrice = unitPriceField
+      ? parsePrice(unitPriceField.value)
+      : null;
 
     if (looksLikeItemName(name) && price !== null && price > 0) {
-      items.push({ name, price });
+      items.push(
+        buildExtractedItem(
+          name,
+          price,
+          Number.isFinite(structuredQuantity) ? structuredQuantity : null,
+          structuredUnitPrice,
+        ),
+      );
     }
   }
 
@@ -343,7 +373,7 @@ function parseStructuredItemsSequentially(
 
     const price = parsePrice(field.value);
     if (looksLikeItemName(pendingItemName) && price !== null && price > 0) {
-      items.push({ name: pendingItemName, price });
+      items.push(buildExtractedItem(pendingItemName, price));
       pendingItemName = "";
     }
   }

@@ -6,11 +6,20 @@ import type {
   ReceiptValidation,
 } from "../types/receipt";
 import type { DetectedReceiptField } from "./textractService";
+import { normalizeExtractedReceiptItem } from "./receiptQuantityParser";
 
 type RepairInput = {
   rawText: string;
   detectedFields: DetectedReceiptField[];
   parsedReceipt: ExtractedReceipt;
+};
+
+type OpenAIRepairItem = {
+  name: string;
+  quantity?: number;
+  unitPrice?: number;
+  totalPrice?: number;
+  price?: number;
 };
 
 type OpenAIRepairResponse = {
@@ -57,7 +66,7 @@ function roundCurrency(value: number): number {
 function buildReceiptValidation(receipt: ExtractedReceipt): ReceiptValidation {
   const warnings: string[] = [];
   const itemSubtotal = roundCurrency(
-    receipt.items.reduce((sum, item) => sum + item.price, 0),
+    receipt.items.reduce((sum, item) => sum + item.totalPrice, 0),
   );
   const expectedTotal = roundCurrency(itemSubtotal + receipt.tax);
   const difference =
@@ -111,20 +120,30 @@ function validateRepairResponse(data: unknown): OpenAIRepairResponse {
     throw new Error("OpenAI repair response items must be an array.");
   }
 
-  const items = candidate.items.map((item, index) => {
+  const items = candidate.items.map((rawItem, index) => {
+    const item = rawItem as OpenAIRepairItem;
+    const totalCandidate =
+      typeof item.totalPrice === "number"
+        ? item.totalPrice
+        : typeof item.price === "number"
+          ? item.price
+          : null;
+
     if (
       !item ||
       typeof item !== "object" ||
       typeof item.name !== "string" ||
-      !isReasonableAmount(item.price)
+      !isReasonableAmount(totalCandidate)
     ) {
       throw new Error(`OpenAI repair item at index ${index} is invalid.`);
     }
 
-    return {
-      name: item.name.trim(),
-      price: roundCurrency(item.price),
-    };
+    return normalizeExtractedReceiptItem({
+      name: item.name,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      totalPrice: totalCandidate,
+    });
   });
 
   if (items.some((item) => item.name.length === 0)) {
@@ -166,6 +185,11 @@ function buildRepairPrompt(input: RepairInput): string {
         "Repair this receipt extraction using only evidence present in rawText and detectedFields.",
         "Add missing line items when rawText clearly shows an item name and price.",
         "Do not invent items, prices, taxes, or totals.",
+        "Each item must include name, quantity, unitPrice, and totalPrice.",
+        "quantity must be a positive whole number. When uncertain, use quantity 1 and unitPrice = totalPrice.",
+        "Do not treat brand names like 7UP, 5 Guys, 101 Burger, or Formula 1 as quantities.",
+        "Recognize formats such as '3 Potato', '3 x Potato', 'Potato x3', and '3 @ 4.00' when confident.",
+        "totalPrice is the authoritative line amount from the receipt.",
         "Return strict JSON only with restaurantName, items, subtotal, tax, total, repairNotes.",
         "repairNotes must be an array of strings. Use [] if there are no repair notes.",
       ],

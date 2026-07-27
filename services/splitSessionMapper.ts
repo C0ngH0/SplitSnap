@@ -1,5 +1,7 @@
 import type {
   CreateSplitSessionRequest,
+  ItemAssignmentDto,
+  ReceiptItemDto,
   SplitSessionDto,
   UpdateSplitSessionRequest,
 } from "../shared/types/splitSession";
@@ -9,10 +11,13 @@ import type {
   SplitSession,
 } from "../types/split";
 import { TIP_PERCENT_PRESETS } from "../types/split";
+import { createEmptyReceiptItem } from "../utils/itemAllocations";
+import { fromCents, round2 } from "../utils/money";
 import {
   calculateEvenSplit,
   calculateHybridSplit,
   calculateItemizedSplit,
+  computeItemAssignments,
 } from "../utils/splitCalculator";
 
 const DEFAULT_TIP_PERCENT = 18;
@@ -29,15 +34,102 @@ function mapDtoParticipants(dto: SplitSessionDto): Person[] {
   }));
 }
 
-function mapDtoReceiptItems(dto: SplitSessionDto): ReceiptItem[] {
-  return dto.receiptItems.map((receiptItem) => ({
-    id: receiptItem.id,
-    name: receiptItem.name,
-    price: valueOrZero(receiptItem.totalPrice),
-    assignedTo: receiptItem.itemAssignments.map(
-      (assignment) => assignment.participantId,
-    ),
-  }));
+function rebuildAllocationsFromAssignments(
+  quantity: number,
+  assignments: ItemAssignmentDto[],
+  mode: SplitSessionDto["mode"],
+): Pick<ReceiptItem, "individualAllocations" | "sharedAllocation"> {
+  const individualAllocations: ReceiptItem["individualAllocations"] = [];
+  let sharedAllocation: ReceiptItem["sharedAllocation"] = null;
+
+  const typed = assignments.filter(
+    (assignment) => assignment.allocationType != null,
+  );
+
+  if (typed.length > 0) {
+    for (const assignment of assignments) {
+      const shareQuantity = valueOrZero(assignment.shareQuantity);
+      if (shareQuantity <= 0) {
+        continue;
+      }
+
+      if (assignment.allocationType === "SHARED") {
+        if (!sharedAllocation) {
+          sharedAllocation = {
+            quantity: shareQuantity,
+            participantIds: [assignment.participantId],
+          };
+        } else if (
+          !sharedAllocation.participantIds.includes(assignment.participantId)
+        ) {
+          sharedAllocation.participantIds.push(assignment.participantId);
+        }
+      } else {
+        individualAllocations.push({
+          participantId: assignment.participantId,
+          quantity: shareQuantity,
+        });
+      }
+    }
+
+    return { individualAllocations, sharedAllocation };
+  }
+
+  // Legacy: no allocationType. Reconstruct from assignee list.
+  const participantIds = assignments.map(
+    (assignment) => assignment.participantId,
+  );
+
+  if (participantIds.length === 0) {
+    return { individualAllocations: [], sharedAllocation: null };
+  }
+
+  if (mode === "itemized" || participantIds.length === 1) {
+    return {
+      individualAllocations: [
+        { participantId: participantIds[0], quantity },
+      ],
+      sharedAllocation: null,
+    };
+  }
+
+  return {
+    individualAllocations: [],
+    sharedAllocation: {
+      quantity,
+      participantIds,
+    },
+  };
+}
+
+function mapDtoReceiptItems(
+  dto: SplitSessionDto,
+): ReceiptItem[] {
+  return dto.receiptItems.map((receiptItem: ReceiptItemDto) => {
+    const totalPrice = valueOrZero(receiptItem.totalPrice);
+    const quantity = Math.max(
+      1,
+      Math.floor(valueOrZero(receiptItem.quantity) || 1),
+    );
+    const unitPrice =
+      receiptItem.unitPrice != null && Number.isFinite(receiptItem.unitPrice)
+        ? valueOrZero(receiptItem.unitPrice)
+        : round2(totalPrice / quantity);
+    const allocations = rebuildAllocationsFromAssignments(
+      quantity,
+      receiptItem.itemAssignments,
+      dto.mode,
+    );
+
+    return {
+      id: receiptItem.id,
+      name: receiptItem.name,
+      quantity,
+      unitPrice,
+      totalPrice,
+      ...allocations,
+    };
+  });
 }
 
 function evenPreTipTotal(dto: SplitSessionDto): number {
@@ -111,10 +203,11 @@ export function apiDtoToSplitSession(dto: SplitSessionDto): SplitSession {
     createdAt: dto.createdAt,
     updatedAt: dto.updatedAt,
     restaurantName: dto.restaurantName ?? "",
+    receiptImageKey: dto.receiptImageKey ?? null,
+    receiptImageUrl: dto.receiptImageUrl ?? null,
     mode: dto.mode,
     people,
     items,
-    // Even drafts edit the pre-tip bill; other modes keep prior total mapping.
     billTotal:
       dto.mode === "even" ? preTipTotal : valueOrZero(dto.total),
     tax: valueOrZero(dto.tax),
@@ -134,6 +227,7 @@ export function splitSessionToCreateRequest(
     title: session.title,
     mode: session.mode,
     restaurantName: session.restaurantName || undefined,
+    receiptImageKey: session.receiptImageKey || undefined,
     subtotal: session.summary.subtotal,
     tax: session.tax,
     tip: session.tip,
@@ -142,19 +236,23 @@ export function splitSessionToCreateRequest(
       clientId: person.id,
       displayName: person.name,
     })),
-    receiptItems: session.items.map((item) => ({
-      clientId: item.id,
-      name: item.name,
-      quantity: 1,
-      totalPrice: item.price,
-      itemAssignments: item.assignedTo.map((personId) => ({
-        participantId: personId,
-        amount:
-          item.assignedTo.length > 0
-            ? item.price / item.assignedTo.length
-            : item.price,
-      })),
-    })),
+    receiptItems: session.items.map((item) => {
+      const assignments = computeItemAssignments(item);
+
+      return {
+        clientId: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
+        itemAssignments: assignments.map((assignment) => ({
+          participantId: assignment.participantId,
+          shareQuantity: assignment.shareQuantity,
+          allocationType: assignment.allocationType,
+          amount: fromCents(assignment.amountCents),
+        })),
+      };
+    }),
     payments: [],
   };
 }
@@ -163,4 +261,46 @@ export function splitSessionToUpdateRequest(
   session: SplitSession,
 ): UpdateSplitSessionRequest {
   return splitSessionToCreateRequest(session);
+}
+
+/** Normalize legacy/partial items for local drafts (tests / defensive). */
+export function normalizeLegacyReceiptItem(
+  partial: {
+    id: string;
+    name: string;
+    price?: number;
+    totalPrice?: number;
+    quantity?: number;
+    assignedTo?: string[];
+  },
+): ReceiptItem {
+  const totalPrice = partial.totalPrice ?? partial.price ?? 0;
+  const quantity = Math.max(1, Math.floor(partial.quantity ?? 1));
+  const item = createEmptyReceiptItem(
+    partial.id,
+    partial.name,
+    totalPrice,
+    quantity,
+  );
+
+  if (partial.assignedTo && partial.assignedTo.length === 1) {
+    return {
+      ...item,
+      individualAllocations: [
+        { participantId: partial.assignedTo[0], quantity },
+      ],
+    };
+  }
+
+  if (partial.assignedTo && partial.assignedTo.length > 1) {
+    return {
+      ...item,
+      sharedAllocation: {
+        quantity,
+        participantIds: partial.assignedTo,
+      },
+    };
+  }
+
+  return item;
 }

@@ -1,4 +1,4 @@
-import { PaymentStatus, Prisma, SplitType } from "@prisma/client";
+import { AllocationType, PaymentStatus, Prisma, SplitType } from "@prisma/client";
 
 import { prisma } from "../db/prisma";
 import {
@@ -31,6 +31,7 @@ type NormalizedItemAssignment = {
   receiptItemKey?: string;
   participantKey: string;
   shareQuantity?: number;
+  allocationType: AllocationType;
   amount: number;
 };
 
@@ -46,6 +47,7 @@ type NormalizedSplitSessionInput = {
   title: string;
   splitType: SplitType;
   restaurantName?: string;
+  receiptImageKey?: string;
   subtotal: number;
   tax: number;
   tip: number;
@@ -204,6 +206,37 @@ function normalizeParticipants(value: unknown): NormalizedParticipant[] {
   });
 }
 
+function toCents(amount: number): number {
+  return Math.round(amount * 100);
+}
+
+function normalizeAllocationType(
+  value: unknown,
+  indexLabel: string,
+): AllocationType {
+  if (value === undefined || value === null || value === "") {
+    return AllocationType.INDIVIDUAL;
+  }
+
+  if (typeof value !== "string") {
+    throw new SplitSessionValidationError(
+      `${indexLabel}.allocationType must be a string.`,
+    );
+  }
+
+  const normalized = value.trim().toUpperCase();
+  if (normalized === AllocationType.INDIVIDUAL) {
+    return AllocationType.INDIVIDUAL;
+  }
+  if (normalized === AllocationType.SHARED) {
+    return AllocationType.SHARED;
+  }
+
+  throw new SplitSessionValidationError(
+    `${indexLabel}.allocationType must be INDIVIDUAL or SHARED.`,
+  );
+}
+
 function normalizeItemAssignment(
   value: unknown,
   indexLabel: string,
@@ -224,6 +257,20 @@ function normalizeItemAssignment(
     );
   }
 
+  const shareQuantity = optionalNumber(
+    value.shareQuantity,
+    `${indexLabel}.shareQuantity`,
+  );
+
+  if (
+    shareQuantity !== undefined &&
+    (!Number.isInteger(shareQuantity) || shareQuantity < 0)
+  ) {
+    throw new SplitSessionValidationError(
+      `${indexLabel}.shareQuantity must be a whole number >= 0.`,
+    );
+  }
+
   return {
     receiptItemKey:
       receiptItemKey ??
@@ -231,9 +278,10 @@ function normalizeItemAssignment(
       optionalString(value.receiptItemClientId) ??
       optionalString(value.receiptItemLocalId),
     participantKey,
-    shareQuantity: optionalNumber(
-      value.shareQuantity,
-      `${indexLabel}.shareQuantity`,
+    shareQuantity,
+    allocationType: normalizeAllocationType(
+      value.allocationType,
+      indexLabel,
     ),
     amount: requiredNumber(value.amount, `${indexLabel}.amount`),
   };
@@ -272,12 +320,28 @@ function normalizeReceiptItems(value: unknown): NormalizedReceiptItem[] {
       );
     }
 
-    return {
+    const quantity =
+      optionalNumber(receiptItem.quantity, `receiptItems[${index}].quantity`) ??
+      1;
+
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      throw new SplitSessionValidationError(
+        `receiptItems[${index}].quantity must be a whole number of at least 1.`,
+      );
+    }
+
+    const itemAssignments = rawAssignments.map((assignment, assignmentIndex) =>
+      normalizeItemAssignment(
+        assignment,
+        `receiptItems[${index}].itemAssignments[${assignmentIndex}]`,
+        key,
+      ),
+    );
+
+    const normalizedItem: NormalizedReceiptItem = {
       key,
       name,
-      quantity:
-        optionalNumber(receiptItem.quantity, `receiptItems[${index}].quantity`) ??
-        1,
+      quantity,
       unitPrice: optionalNumber(
         receiptItem.unitPrice,
         `receiptItems[${index}].unitPrice`,
@@ -286,15 +350,69 @@ function normalizeReceiptItems(value: unknown): NormalizedReceiptItem[] {
         receiptItem.totalPrice ?? receiptItem.price,
         `receiptItems[${index}].totalPrice`,
       ),
-      itemAssignments: rawAssignments.map((assignment, assignmentIndex) =>
-        normalizeItemAssignment(
-          assignment,
-          `receiptItems[${index}].itemAssignments[${assignmentIndex}]`,
-          key,
-        ),
-      ),
+      itemAssignments,
     };
+
+    validateReceiptItemAssignments(normalizedItem, index);
+
+    return normalizedItem;
   });
+}
+
+function validateReceiptItemAssignments(
+  item: NormalizedReceiptItem,
+  index: number,
+): void {
+  const label = `receiptItems[${index}]`;
+  const totalCents = toCents(item.totalPrice);
+  let amountCents = 0;
+  let individualUnits = 0;
+  let sharedUnits: number | null = null;
+
+  for (const assignment of item.itemAssignments) {
+    if (assignment.amount < 0) {
+      throw new SplitSessionValidationError(
+        `${label} assignment amounts must be >= 0.`,
+      );
+    }
+
+    amountCents += toCents(assignment.amount);
+    const shareQuantity = assignment.shareQuantity ?? 0;
+
+    if (assignment.allocationType === AllocationType.INDIVIDUAL) {
+      individualUnits += shareQuantity;
+    } else {
+      if (sharedUnits === null) {
+        sharedUnits = shareQuantity;
+      } else if (sharedUnits !== shareQuantity) {
+        throw new SplitSessionValidationError(
+          `${label} shared assignments must use the same shareQuantity.`,
+        );
+      }
+    }
+  }
+
+  const shared = sharedUnits ?? 0;
+  if (individualUnits + shared > item.quantity) {
+    throw new SplitSessionValidationError(
+      `${label} is over-assigned (${individualUnits + shared} of ${item.quantity}).`,
+    );
+  }
+
+  if (
+    item.itemAssignments.length > 0 &&
+    individualUnits + shared !== item.quantity
+  ) {
+    throw new SplitSessionValidationError(
+      `${label} must assign all units (${individualUnits + shared} of ${item.quantity}).`,
+    );
+  }
+
+  if (item.itemAssignments.length > 0 && amountCents !== totalCents) {
+    throw new SplitSessionValidationError(
+      `${label} assignment amounts must sum exactly to totalPrice.`,
+    );
+  }
 }
 
 function normalizeTopLevelItemAssignments(
@@ -368,6 +486,7 @@ function normalizeSplitSessionInput(body: unknown): NormalizedSplitSessionInput 
     title,
     splitType: normalizeSplitType(body.mode ?? body.splitType),
     restaurantName,
+    receiptImageKey: optionalString(body.receiptImageKey),
     subtotal: requiredNumber(body.subtotal, "subtotal"),
     tax: requiredNumber(body.tax, "tax"),
     tip: requiredNumber(body.tip, "tip"),
@@ -449,6 +568,7 @@ async function replaceNestedRecords(
           "item assignment participantId",
         ),
         shareQuantity: assignment.shareQuantity,
+        allocationType: assignment.allocationType,
         amount: assignment.amount,
       },
     });
@@ -483,7 +603,7 @@ export async function listSplitSessions(ownerUserId: string) {
     orderBy: { createdAt: "desc" },
   });
 
-  return splitSessions.map(mapSplitSessionToDto);
+  return Promise.all(splitSessions.map(mapSplitSessionToDto));
 }
 
 export async function getSplitSessionById(id: string, ownerUserId: string) {
@@ -512,6 +632,7 @@ export async function createSplitSession(
         title: input.title,
         splitType: input.splitType,
         restaurantName: input.restaurantName,
+        receiptImageKey: input.receiptImageKey,
         subtotal: input.subtotal,
         tax: input.tax,
         tip: input.tip,
@@ -561,6 +682,7 @@ export async function updateSplitSession(
         title: input.title,
         splitType: input.splitType,
         restaurantName: input.restaurantName,
+        receiptImageKey: input.receiptImageKey ?? null,
         subtotal: input.subtotal,
         tax: input.tax,
         tip: input.tip,

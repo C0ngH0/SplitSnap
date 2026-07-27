@@ -1,6 +1,8 @@
 import { API_BASE_URL } from "./apiConfig";
 import type { ExtractedReceipt, ExtractedReceiptItem } from "../types/receipt";
 import type { ReceiptItem } from "../types/split";
+import { createEmptyReceiptItem } from "../utils/itemAllocations";
+import { deriveUnitPrice, round2 } from "../utils/money";
 
 const RECEIPT_EXTRACT_ENDPOINT = `${API_BASE_URL}/api/receipt/extract`;
 const RECEIPT_IMAGE_FIELD_NAME = "image";
@@ -12,16 +14,50 @@ export type ImportedReceiptData = {
   subtotal: number;
 };
 
+/** Normalize OCR/API payloads that may still send legacy `price`. */
+export function normalizeExtractedItem(
+  raw: Partial<ExtractedReceiptItem> & {
+    name?: string;
+    price?: number;
+  },
+): ExtractedReceiptItem {
+  const name = (raw.name ?? "").trim();
+  const totalPrice = round2(
+    typeof raw.totalPrice === "number" && Number.isFinite(raw.totalPrice)
+      ? raw.totalPrice
+      : typeof raw.price === "number" && Number.isFinite(raw.price)
+        ? raw.price
+        : 0,
+  );
+  const quantity =
+    typeof raw.quantity === "number" &&
+    Number.isInteger(raw.quantity) &&
+    raw.quantity >= 1
+      ? raw.quantity
+      : 1;
+  const unitPrice =
+    typeof raw.unitPrice === "number" && Number.isFinite(raw.unitPrice)
+      ? round2(raw.unitPrice)
+      : deriveUnitPrice(totalPrice, quantity);
+
+  return {
+    name,
+    quantity,
+    unitPrice,
+    totalPrice,
+  };
+}
+
 function mapExtractedItemToReceiptItem(
   item: ExtractedReceiptItem,
   createId: () => string,
 ): ReceiptItem {
-  return {
-    id: createId(),
-    name: item.name.trim(),
-    price: item.price,
-    assignedTo: [],
-  };
+  return createEmptyReceiptItem(
+    createId(),
+    item.name.trim(),
+    item.totalPrice,
+    item.quantity,
+  );
 }
 
 /** Map extracted OCR data into the app's receipt item shape. */
@@ -83,7 +119,6 @@ export async function extractReceipt(imageUri: string): Promise<ExtractedReceipt
 
     response = await fetch(RECEIPT_EXTRACT_ENDPOINT, {
       method: "POST",
-      // Do not set Content-Type manually; React Native adds the multipart boundary.
       body: formData,
     });
   } catch (error) {
@@ -138,6 +173,18 @@ export async function extractReceipt(imageUri: string): Promise<ExtractedReceipt
 
   return {
     ...data,
-    items: data.items.map((item) => ({ ...item })),
+    items: data.items.map((item) =>
+      normalizeExtractedItem(
+        item as Partial<ExtractedReceiptItem> & { price?: number },
+      ),
+    ),
+    receiptImageKey:
+      typeof (data as ExtractedReceipt).receiptImageKey === "string"
+        ? (data as ExtractedReceipt).receiptImageKey
+        : undefined,
+    receiptImageUrl:
+      typeof (data as ExtractedReceipt).receiptImageUrl === "string"
+        ? (data as ExtractedReceipt).receiptImageUrl
+        : undefined,
   };
 }

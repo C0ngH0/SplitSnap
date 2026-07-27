@@ -1,16 +1,5 @@
-export type ExtractedReceiptItem = {
-  name: string;
-  price: number;
-};
-
-export type ExtractedReceipt = {
-  restaurantName: string;
-  rawText: string;
-  subtotal: number;
-  tax: number;
-  total: number;
-  items: ExtractedReceiptItem[];
-};
+import type { ExtractedReceipt } from "../types/receipt";
+import { normalizeExtractedReceiptItem } from "./receiptQuantityParser";
 
 const MOCK_EXTRACTED_RECEIPT: ExtractedReceipt = {
   restaurantName: "The Corner Bistro",
@@ -19,26 +8,47 @@ const MOCK_EXTRACTED_RECEIPT: ExtractedReceipt = {
     "123 Main Street",
     "",
     "Classic Burger        14.50",
+    "3 Potato              12.00",
     "Caesar Salad          11.00",
     "Iced Tea               3.50",
     "Garlic Fries           6.50",
-    "Chocolate Cake         7.00",
     "",
-    "Subtotal              42.50",
-    "Tax                    3.61",
-    "Total                 46.11",
+    "Subtotal              47.50",
+    "Tax                    4.04",
+    "Total                 51.54",
     "",
     "Thank you!",
   ].join("\n"),
-  subtotal: 42.5,
-  tax: 3.61,
-  total: 46.11,
+  subtotal: 47.5,
+  tax: 4.04,
+  total: 51.54,
   items: [
-    { name: "Classic Burger", price: 14.5 },
-    { name: "Caesar Salad", price: 11.0 },
-    { name: "Iced Tea", price: 3.5 },
-    { name: "Garlic Fries", price: 6.5 },
-    { name: "Chocolate Cake", price: 7.0 },
+    normalizeExtractedReceiptItem({
+      name: "Classic Burger",
+      quantity: 1,
+      totalPrice: 14.5,
+    }),
+    normalizeExtractedReceiptItem({
+      name: "Potato",
+      quantity: 3,
+      unitPrice: 4,
+      totalPrice: 12,
+    }),
+    normalizeExtractedReceiptItem({
+      name: "Caesar Salad",
+      quantity: 1,
+      totalPrice: 11,
+    }),
+    normalizeExtractedReceiptItem({
+      name: "Iced Tea",
+      quantity: 1,
+      totalPrice: 3.5,
+    }),
+    normalizeExtractedReceiptItem({
+      name: "Garlic Fries",
+      quantity: 1,
+      totalPrice: 6.5,
+    }),
   ],
 };
 
@@ -46,8 +56,7 @@ const MOCK_EXTRACTED_RECEIPT: ExtractedReceipt = {
 const MOCK_EXTRACTION_DELAY_MS = 800;
 
 /**
- * Mock receipt extraction. Returns the same shape as the mobile app's mock OCR.
- * Replace with AWS Textract in a future phase.
+ * Mock receipt extraction. Returns the same shape as the mobile app's OCR contract.
  */
 export async function extractReceiptMock(
   _imageUri?: string,

@@ -4,6 +4,7 @@ import type {
   SplitMode,
   SplitSessionDto,
 } from "../../../shared/types/splitSession";
+import { getReceiptImageViewUrl } from "../services/receiptImageStorage";
 
 export const splitSessionDtoInclude = {
   participants: {
@@ -42,14 +43,19 @@ function toSplitMode(value: string): SplitMode {
   return value.toLowerCase() as SplitMode;
 }
 
-export function mapSplitSessionToDto(
+export async function mapSplitSessionToDto(
   splitSession: SplitSessionWithRelations,
-): SplitSessionDto {
+): Promise<SplitSessionDto> {
+  const receiptImageKey = splitSession.receiptImageKey;
+  const receiptImageUrl = await getReceiptImageViewUrl(receiptImageKey);
+
   return {
     id: splitSession.id,
     title: splitSession.title,
     mode: toSplitMode(splitSession.splitType),
     restaurantName: splitSession.restaurantName,
+    receiptImageKey: receiptImageKey ?? null,
+    receiptImageUrl,
     subtotal: toNumber(splitSession.subtotal),
     tax: toNumber(splitSession.tax),
     tip: toNumber(splitSession.tip),
@@ -71,6 +77,7 @@ export function mapSplitSessionToDto(
         participantId: assignment.participantId,
         shareQuantity: toNumber(assignment.shareQuantity),
         amount: toNumber(assignment.amount),
+        allocationType: assignment.allocationType,
       })),
     })),
     payments: splitSession.payments.map((payment) => ({

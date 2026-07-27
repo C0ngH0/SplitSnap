@@ -86,6 +86,8 @@ export function normalizeSessionForSave(
     updatedAt,
     restaurantName,
     paymentStatus: sourceSession.paymentStatus,
+    receiptImageKey: sourceSession.receiptImageKey ?? null,
+    receiptImageUrl: sourceSession.receiptImageUrl ?? null,
     mode: sourceSession.mode,
     people: sourceSession.people,
     items: sourceSession.items,
