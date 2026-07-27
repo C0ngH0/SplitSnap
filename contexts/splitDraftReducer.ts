@@ -2,10 +2,25 @@ import type { ExtractedReceipt } from "../types/receipt";
 import type {
   Person,
   ReceiptItem,
+  SharedAllocation,
   SplitMode,
   SplitSession,
   TipMode,
 } from "../types/split";
+import {
+  clearItemAssignments,
+  createEmptyReceiptItem,
+  removeParticipantFromItem,
+  setIndividualQuantity,
+  setItemizedSoleOwner,
+  setSharedAllocation,
+  setSharedQuantity,
+  toggleHybridQuantityOneAssignment,
+  toggleSharedParticipant,
+  withQuantity,
+  withTotalPrice,
+  withUnitPrice,
+} from "../utils/itemAllocations";
 import {
   validateItemFields,
   validateParticipantName,
@@ -24,6 +39,10 @@ export type SplitDraftState = {
   tipPercent: number;
   customTip: string;
   receiptImageUri: string | null;
+  /** Durable storage key from OCR upload when available. */
+  receiptImageKey: string | null;
+  /** Remote (or local) URL used for saved-split preview. */
+  receiptImageUrl: string | null;
   extractedReceipt: ExtractedReceipt | null;
   isExtracting: boolean;
   importMessage: string | null;
@@ -42,6 +61,8 @@ export const initialSplitDraftState: SplitDraftState = {
   tipPercent: INITIAL_TIP_PERCENT,
   customTip: "",
   receiptImageUri: null,
+  receiptImageKey: null,
+  receiptImageUrl: null,
   extractedReceipt: null,
   isExtracting: false,
   importMessage: null,
@@ -69,10 +90,38 @@ export type SplitDraftAction =
   | { type: "ADD_PERSON"; id: string; name: string }
   | { type: "UPDATE_PERSON"; personId: string; name: string }
   | { type: "REMOVE_PERSON"; personId: string }
-  | { type: "ADD_ITEM"; id: string; name: string; price: number }
-  | { type: "UPDATE_ITEM"; itemId: string; name: string; price: number }
+  | {
+      type: "ADD_ITEM";
+      id: string;
+      name: string;
+      totalPrice: number;
+      quantity?: number;
+    }
+  | {
+      type: "UPDATE_ITEM";
+      itemId: string;
+      name: string;
+      totalPrice: number;
+      quantity?: number;
+      unitPrice?: number;
+    }
   | { type: "REMOVE_ITEM"; itemId: string }
   | { type: "TOGGLE_ASSIGNMENT"; itemId: string; personId: string }
+  | {
+      type: "SET_INDIVIDUAL_QUANTITY";
+      itemId: string;
+      personId: string;
+      quantity: number;
+    }
+  | {
+      type: "SET_SHARED_ALLOCATION";
+      itemId: string;
+      shared: SharedAllocation | null;
+    }
+  | { type: "SET_SHARED_QUANTITY"; itemId: string; quantity: number }
+  | { type: "TOGGLE_SHARED_PARTICIPANT"; itemId: string; personId: string }
+  | { type: "CLEAR_ITEM_ASSIGNMENTS"; itemId: string }
+  | { type: "UPDATE_EXTRACTED_ITEM"; index: number; item: ExtractedReceipt["items"][number] }
   | { type: "SET_BILL_TOTAL"; value: string }
   | { type: "SET_TAX"; value: string }
   | { type: "SET_CUSTOM_TIP"; value: string }
@@ -80,6 +129,11 @@ export type SplitDraftAction =
   | { type: "SELECT_CUSTOM_TIP_MODE" }
   | { type: "SET_RECEIPT_IMAGE"; uri: string }
   | { type: "REMOVE_RECEIPT_IMAGE" }
+  | {
+      type: "SET_RECEIPT_IMAGE_REMOTE";
+      key: string | null;
+      url: string | null;
+    }
   | { type: "EXTRACT_START" }
   | { type: "EXTRACT_SUCCESS"; receipt: ExtractedReceipt }
   | { type: "EXTRACT_FAILURE"; message: string }
@@ -113,6 +167,56 @@ function clearExtraction(state: SplitDraftState): SplitDraftState {
     extractedReceipt: null,
     isExtracting: false,
     importMessage: null,
+  };
+}
+
+function clearReceiptImage(state: SplitDraftState): SplitDraftState {
+  return {
+    ...clearExtraction(state),
+    receiptImageUri: null,
+    receiptImageKey: null,
+    receiptImageUrl: null,
+  };
+}
+
+function rebuildExtractedValidation(
+  receipt: ExtractedReceipt,
+): ExtractedReceipt {
+  const itemSubtotal = receipt.items.reduce(
+    (sum, item) => sum + item.totalPrice,
+    0,
+  );
+  const roundedSubtotal = Math.round(itemSubtotal * 100) / 100;
+  const expectedTotal = Math.round((roundedSubtotal + receipt.tax) * 100) / 100;
+  const difference =
+    receipt.total > 0
+      ? Math.round((receipt.total - expectedTotal) * 100) / 100
+      : receipt.subtotal > 0
+        ? Math.round((receipt.subtotal - roundedSubtotal) * 100) / 100
+        : 0;
+  const warnings: string[] = [];
+  const hasMismatch = Math.abs(difference) > 0.05;
+
+  if (hasMismatch) {
+    warnings.push("Parsed items do not add up to the receipt total.");
+  }
+
+  if (
+    receipt.subtotal > 0 &&
+    Math.abs(receipt.subtotal - roundedSubtotal) > 0.05
+  ) {
+    warnings.push("Parsed items do not add up to the receipt subtotal.");
+  }
+
+  return {
+    ...receipt,
+    validation: {
+      itemSubtotal: roundedSubtotal,
+      expectedTotal,
+      difference,
+      hasMismatch,
+      warnings,
+    },
   };
 }
 
@@ -155,20 +259,22 @@ export function splitDraftReducer(
     }
 
     case "REMOVE_PERSON":
-      // Removing a participant must also release every item they were
-      // assigned, otherwise items keep dangling ids and never validate.
       return invalidateResults({
         ...state,
         people: state.people.filter((person) => person.id !== action.personId),
-        items: state.items.map((item) => ({
-          ...item,
-          assignedTo: item.assignedTo.filter((id) => id !== action.personId),
-        })),
+        items: state.items.map((item) =>
+          removeParticipantFromItem(item, action.personId),
+        ),
       });
 
     case "ADD_ITEM": {
       const name = action.name.trim();
-      const validationError = validateItemFields(name, action.price);
+      const quantity = action.quantity ?? 1;
+      const validationError = validateItemFields(
+        name,
+        action.totalPrice,
+        quantity,
+      );
 
       if (validationError) {
         return { ...state, error: validationError };
@@ -178,15 +284,38 @@ export function splitDraftReducer(
         ...state,
         items: [
           ...state.items,
-          { id: action.id, name, price: action.price, assignedTo: [] },
+          createEmptyReceiptItem(
+            action.id,
+            name,
+            action.totalPrice,
+            quantity,
+          ),
         ],
       });
     }
 
     case "UPDATE_ITEM": {
       const name = action.name.trim();
-      const validationError = validateItemFields(name, action.price);
+      const existing = state.items.find((item) => item.id === action.itemId);
+      if (!existing) {
+        return state;
+      }
 
+      let next = { ...existing, name };
+      if (action.quantity !== undefined) {
+        next = withQuantity(next, action.quantity);
+      }
+      if (action.unitPrice !== undefined) {
+        next = withUnitPrice(next, action.unitPrice);
+      } else if (action.totalPrice !== undefined) {
+        next = withTotalPrice(next, action.totalPrice);
+      }
+
+      const validationError = validateItemFields(
+        name,
+        next.totalPrice,
+        next.quantity,
+      );
       if (validationError) {
         return { ...state, error: validationError };
       }
@@ -194,9 +323,7 @@ export function splitDraftReducer(
       return invalidateResults({
         ...state,
         items: state.items.map((item) =>
-          item.id === action.itemId
-            ? { ...item, name, price: action.price }
-            : item,
+          item.id === action.itemId ? next : item,
         ),
       });
     }
@@ -215,20 +342,93 @@ export function splitDraftReducer(
             return item;
           }
 
-          // Itemized allows exactly one owner per item, so selecting replaces.
-          // Hybrid shares an item, so selecting toggles membership.
           if (state.mode === "itemized") {
-            return { ...item, assignedTo: [action.personId] };
+            if (item.quantity === 1) {
+              return setItemizedSoleOwner(item, action.personId);
+            }
+            // qty > 1 itemized uses steppers; treat toggle as assign/clear 1 unit
+            const current =
+              item.individualAllocations.find(
+                (allocation) => allocation.participantId === action.personId,
+              )?.quantity ?? 0;
+            return setIndividualQuantity(
+              item,
+              action.personId,
+              current > 0 ? 0 : 1,
+            );
           }
 
-          const isAssigned = item.assignedTo.includes(action.personId);
-          const assignedTo = isAssigned
-            ? item.assignedTo.filter((id) => id !== action.personId)
-            : [...item.assignedTo, action.personId];
+          if (item.quantity === 1) {
+            return toggleHybridQuantityOneAssignment(item, action.personId);
+          }
 
-          return { ...item, assignedTo };
+          return toggleSharedParticipant(item, action.personId);
         }),
       });
+
+    case "SET_INDIVIDUAL_QUANTITY":
+      return invalidateResults({
+        ...state,
+        items: state.items.map((item) =>
+          item.id === action.itemId
+            ? setIndividualQuantity(item, action.personId, action.quantity)
+            : item,
+        ),
+      });
+
+    case "SET_SHARED_ALLOCATION":
+      return invalidateResults({
+        ...state,
+        items: state.items.map((item) =>
+          item.id === action.itemId
+            ? setSharedAllocation(item, action.shared)
+            : item,
+        ),
+      });
+
+    case "SET_SHARED_QUANTITY":
+      return invalidateResults({
+        ...state,
+        items: state.items.map((item) =>
+          item.id === action.itemId
+            ? setSharedQuantity(item, action.quantity)
+            : item,
+        ),
+      });
+
+    case "TOGGLE_SHARED_PARTICIPANT":
+      return invalidateResults({
+        ...state,
+        items: state.items.map((item) =>
+          item.id === action.itemId
+            ? toggleSharedParticipant(item, action.personId)
+            : item,
+        ),
+      });
+
+    case "CLEAR_ITEM_ASSIGNMENTS":
+      return invalidateResults({
+        ...state,
+        items: state.items.map((item) =>
+          item.id === action.itemId ? clearItemAssignments(item) : item,
+        ),
+      });
+
+    case "UPDATE_EXTRACTED_ITEM": {
+      if (!state.extractedReceipt) {
+        return state;
+      }
+
+      const items = state.extractedReceipt.items.map((item, index) =>
+        index === action.index ? action.item : item,
+      );
+      const extractedReceipt = rebuildExtractedValidation({
+        ...state.extractedReceipt,
+        items,
+      });
+
+      return { ...state, extractedReceipt, error: null };
+    }
 
     case "SET_BILL_TOTAL":
       return invalidateResults({ ...state, billTotal: action.value });
@@ -250,10 +450,22 @@ export function splitDraftReducer(
       return invalidateResults({ ...state, tipMode: "fixed" });
 
     case "SET_RECEIPT_IMAGE":
-      return clearExtraction({ ...state, receiptImageUri: action.uri });
+      return clearExtraction({
+        ...state,
+        receiptImageUri: action.uri,
+        receiptImageKey: null,
+        receiptImageUrl: null,
+      });
 
     case "REMOVE_RECEIPT_IMAGE":
-      return clearExtraction({ ...state, receiptImageUri: null });
+      return clearReceiptImage(state);
+
+    case "SET_RECEIPT_IMAGE_REMOTE":
+      return {
+        ...state,
+        receiptImageKey: action.key,
+        receiptImageUrl: action.url,
+      };
 
     case "EXTRACT_START":
       return { ...state, isExtracting: true, error: null };
@@ -264,6 +476,8 @@ export function splitDraftReducer(
         extractedReceipt: action.receipt,
         isExtracting: false,
         error: null,
+        receiptImageKey: action.receipt.receiptImageKey ?? state.receiptImageKey,
+        receiptImageUrl: action.receipt.receiptImageUrl ?? state.receiptImageUrl,
       };
 
     case "EXTRACT_FAILURE":
@@ -275,8 +489,6 @@ export function splitDraftReducer(
       };
 
     case "IMPORT_EXTRACTED":
-      // Imported receipts always land in itemized mode: OCR gives us line
-      // items, which is exactly what itemized needs.
       return {
         ...invalidateResults({
           ...state,
@@ -315,6 +527,9 @@ export function splitDraftReducer(
         tipMode,
         tipPercent,
         customTip: tipMode === "fixed" ? customTip.toFixed(2) : "",
+        receiptImageKey: action.session.receiptImageKey ?? null,
+        receiptImageUrl: action.session.receiptImageUrl ?? null,
+        receiptImageUri: action.session.receiptImageUrl ?? null,
         session: { ...action.session, tipMode, tipPercent, customTip },
         savedStatus: "Saved split loaded.",
       };

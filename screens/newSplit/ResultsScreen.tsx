@@ -7,6 +7,7 @@ import {
   Banner,
   Button,
   Card,
+  ReceiptPreviewSection,
   Screen,
   SectionHeader,
   SummaryRow,
@@ -59,6 +60,11 @@ export default function ResultsScreen({ navigation }: Props) {
     : saveSucceeded
       ? "Saved"
       : "Save Split";
+  const receiptImageUrl =
+    session.receiptImageUrl ||
+    draft.receiptImageUrl ||
+    draft.receiptImageUri ||
+    null;
 
   return (
     <Screen
@@ -124,6 +130,8 @@ export default function ResultsScreen({ navigation }: Props) {
         />
       ) : null}
 
+      <ReceiptPreviewSection imageUrl={receiptImageUrl} />
+
       <Card style={styles.card} title="Receipt Summary">
         <SummaryRow
           label="Subtotal"
@@ -167,6 +175,17 @@ export default function ResultsScreen({ navigation }: Props) {
                 label="Food subtotal"
                 value={formatCurrency(person.foodSubtotal)}
               />
+              {person.itemLines?.map((line, index) => (
+                <SummaryRow
+                  key={`${person.personId}-${line.quantityLabel}-${index}`}
+                  label={
+                    line.sharedWithNames && line.sharedWithNames.length > 0
+                      ? `${line.quantityLabel}\nShared with ${line.sharedWithNames.join(", ")}`
+                      : line.quantityLabel
+                  }
+                  value={formatCurrency(line.amount)}
+                />
+              ))}
               <SummaryRow
                 label="Tax share"
                 value={formatCurrency(person.taxShare)}

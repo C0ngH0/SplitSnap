@@ -26,13 +26,13 @@ const MODE_OPTIONS: {
   {
     mode: "itemized",
     label: "Itemized Split",
-    description: "Assign each item to one person.",
+    description: "Assign each item or unit to one person.",
     icon: "person-outline",
   },
   {
     mode: "hybrid",
     label: "Hybrid Split",
-    description: "Share items across multiple people.",
+    description: "Assign some units individually and share the rest.",
     icon: "people-outline",
   },
 ];

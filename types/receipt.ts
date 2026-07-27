@@ -1,6 +1,8 @@
 export type ExtractedReceiptItem = {
   name: string;
-  price: number;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
 };
 
 export type ReceiptValidation = {
@@ -21,4 +23,6 @@ export type ExtractedReceipt = {
   validation?: ReceiptValidation;
   repairNotes?: string[];
   extractionMethod?: "textract" | "textract-openai-repair" | "mock-fallback";
+  receiptImageKey?: string;
+  receiptImageUrl?: string;
 };

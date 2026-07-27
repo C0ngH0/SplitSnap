@@ -1,77 +1,32 @@
 import type {
   Person,
+  PersonItemLine,
   PersonTotal,
   ReceiptItem,
   ReceiptSummary,
   SplitSession,
   TipMode,
 } from "../types/split";
+import { assignedUnitCount, remainingUnitCount } from "./itemAllocations";
+import {
+  allocateUnitCents,
+  distributeCents,
+  fromCents,
+  round2,
+  toCents,
+} from "./money";
 
-const CENTS = 100;
+export {
+  allocateUnitCents,
+  distributeCents,
+  fromCents,
+  round2,
+  toCents,
+} from "./money";
 
-/** Convert dollars to whole cents, safely handling floating-point noise. */
-function toCents(amount: number): number {
-  return Math.round(amount * CENTS);
-}
-
-/** Convert whole cents back to dollars. */
-function fromCents(cents: number): number {
-  return cents / CENTS;
-}
-
-/** Round to two decimal places. */
-function round2(amount: number): number {
-  return Math.round(amount * CENTS) / CENTS;
-}
-
-/**
- * Split a whole-cent amount across people using the largest-remainder method.
- * This keeps the distributed cents adding up to exactly `totalCents`.
- */
-function distributeCents(totalCents: number, weights: number[]): number[] {
-  if (weights.length === 0) {
-    return [];
-  }
-
-  const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
-
-  if (totalCents === 0) {
-    return weights.map(() => 0);
-  }
-
-  if (weightSum === 0) {
-    const base = Math.floor(totalCents / weights.length);
-    let remainder = totalCents - base * weights.length;
-    return weights.map(() => {
-      if (remainder > 0) {
-        remainder -= 1;
-        return base + 1;
-      }
-      return base;
-    });
-  }
-
-  const rawShares = weights.map(
-    (weight) => (totalCents * weight) / weightSum,
-  );
-  const floored = rawShares.map((share) => Math.floor(share));
-  let remainder = totalCents - floored.reduce((sum, value) => sum + value, 0);
-
-  const ranked = rawShares
-    .map((share, index) => ({ index, fraction: share - floored[index] }))
-    .sort((a, b) => b.fraction - a.fraction);
-
-  const shares = [...floored];
-  for (let i = 0; i < remainder; i += 1) {
-    shares[ranked[i % ranked.length].index] += 1;
-  }
-
-  return shares;
-}
-
-/** Sum receipt item prices to get the food subtotal. */
+/** Sum receipt item totals to get the food subtotal. */
 export function calculateItemsSubtotal(items: ReceiptItem[]): number {
-  return round2(items.reduce((sum, item) => sum + item.price, 0));
+  return round2(items.reduce((sum, item) => sum + item.totalPrice, 0));
 }
 
 /**
@@ -129,6 +84,7 @@ function buildPersonTotals(
   foodCentsByPerson: number[],
   taxCentsByPerson: number[],
   tipCentsByPerson: number[],
+  itemLinesByPerson: PersonItemLine[][],
 ): PersonTotal[] {
   return people.map((person, index) => {
     const foodSubtotal = fromCents(foodCentsByPerson[index]);
@@ -142,6 +98,7 @@ function buildPersonTotals(
       taxShare,
       tipShare,
       finalAmount: round2(foodSubtotal + taxShare + tipShare),
+      itemLines: itemLinesByPerson[index],
     };
   });
 }
@@ -166,6 +123,7 @@ export function applyRoundingCorrection(
     finalAmount: round2(
       person.foodSubtotal + person.taxShare + person.tipShare,
     ),
+    itemLines: person.itemLines ? [...person.itemLines] : undefined,
   }));
 
   let differenceCents =
@@ -220,6 +178,7 @@ export function calculateEvenSplit(
     finalAmount: round2(
       fromCents(foodCents[index]) + fromCents(tipCents[index]),
     ),
+    itemLines: [] as PersonItemLine[],
   }));
 
   const corrected = applyRoundingCorrection(personTotals, finalTotal);
@@ -230,37 +189,191 @@ export function calculateEvenSplit(
   };
 }
 
-function calculateFoodSubtotals(
-  items: ReceiptItem[],
-  people: Person[],
-  allowMultipleAssignees: boolean,
-): number[] {
-  const foodCentsByPerson = people.map(() => 0);
+export type ComputedAssignment = {
+  participantId: string;
+  allocationType: "INDIVIDUAL" | "SHARED";
+  shareQuantity: number;
+  amountCents: number;
+};
 
-  for (const item of items) {
-    const itemCents = toCents(item.price);
-    const assigneeIndexes = item.assignedTo
-      .map((personId) => people.findIndex((person) => person.id === personId))
-      .filter((index) => index >= 0);
+/**
+ * Cent-safe per-participant amounts for one receipt item.
+ * Unit cents are allocated first, then consumed by individual then shared pools.
+ */
+export function computeItemAssignments(
+  item: ReceiptItem,
+): ComputedAssignment[] {
+  const quantity = Math.max(1, Math.floor(item.quantity));
+  const unitCents = allocateUnitCents(toCents(item.totalPrice), quantity);
+  let cursor = 0;
+  const results: ComputedAssignment[] = [];
 
-    if (assigneeIndexes.length === 0) {
+  for (const allocation of item.individualAllocations) {
+    if (allocation.quantity <= 0) {
       continue;
     }
 
-    if (allowMultipleAssignees) {
+    const take = Math.min(allocation.quantity, quantity - cursor);
+    if (take <= 0) {
+      continue;
+    }
+
+    let amountCents = 0;
+    for (let i = 0; i < take; i += 1) {
+      amountCents += unitCents[cursor];
+      cursor += 1;
+    }
+
+    results.push({
+      participantId: allocation.participantId,
+      allocationType: "INDIVIDUAL",
+      shareQuantity: take,
+      amountCents,
+    });
+  }
+
+  const shared = item.sharedAllocation;
+  if (shared && shared.quantity > 0 && shared.participantIds.length > 0) {
+    const take = Math.min(shared.quantity, quantity - cursor);
+    if (take > 0) {
+      let poolCents = 0;
+      for (let i = 0; i < take; i += 1) {
+        poolCents += unitCents[cursor];
+        cursor += 1;
+      }
+
       const shares = distributeCents(
-        itemCents,
-        assigneeIndexes.map(() => 1),
+        poolCents,
+        shared.participantIds.map(() => 1),
       );
-      assigneeIndexes.forEach((personIndex, shareIndex) => {
-        foodCentsByPerson[personIndex] += shares[shareIndex];
+
+      shared.participantIds.forEach((participantId, index) => {
+        // Dual membership: add a separate SHARED row even if they also have individual.
+        const existing = results.find(
+          (row) =>
+            row.participantId === participantId &&
+            row.allocationType === "SHARED",
+        );
+        if (existing) {
+          existing.amountCents += shares[index];
+          return;
+        }
+
+        results.push({
+          participantId,
+          allocationType: "SHARED",
+          shareQuantity: take,
+          amountCents: shares[index],
+        });
       });
-    } else {
-      foodCentsByPerson[assigneeIndexes[0]] += itemCents;
     }
   }
 
-  return foodCentsByPerson;
+  return results;
+}
+
+function personNameMap(people: Person[]): Map<string, string> {
+  return new Map(people.map((person) => [person.id, person.name]));
+}
+
+function buildItemLinesForAssignments(
+  item: ReceiptItem,
+  assignments: ComputedAssignment[],
+  names: Map<string, string>,
+): Map<string, PersonItemLine[]> {
+  const linesByPerson = new Map<string, PersonItemLine[]>();
+
+  const individualByPerson = new Map<string, ComputedAssignment>();
+  const sharedAssignments: ComputedAssignment[] = [];
+
+  for (const assignment of assignments) {
+    if (assignment.allocationType === "INDIVIDUAL") {
+      const existing = individualByPerson.get(assignment.participantId);
+      if (existing) {
+        existing.shareQuantity += assignment.shareQuantity;
+        existing.amountCents += assignment.amountCents;
+      } else {
+        individualByPerson.set(assignment.participantId, { ...assignment });
+      }
+    } else {
+      sharedAssignments.push(assignment);
+    }
+  }
+
+  for (const assignment of individualByPerson.values()) {
+    const lines = linesByPerson.get(assignment.participantId) ?? [];
+    lines.push({
+      itemName: item.name,
+      quantityLabel: `${assignment.shareQuantity} × ${item.name}`,
+      amount: fromCents(assignment.amountCents),
+    });
+    linesByPerson.set(assignment.participantId, lines);
+  }
+
+  if (sharedAssignments.length > 0) {
+    const sharedQty = sharedAssignments[0]?.shareQuantity ?? 0;
+    const sharedNames = sharedAssignments
+      .map((assignment) => names.get(assignment.participantId) ?? "Someone")
+      .filter(Boolean);
+
+    for (const assignment of sharedAssignments) {
+      if (assignment.amountCents <= 0) {
+        continue;
+      }
+
+      const others = sharedNames.filter(
+        (name) => name !== (names.get(assignment.participantId) ?? ""),
+      );
+      const lines = linesByPerson.get(assignment.participantId) ?? [];
+      lines.push({
+        itemName: item.name,
+        quantityLabel: `${sharedQty} × ${item.name}`,
+        amount: fromCents(assignment.amountCents),
+        sharedWithNames: others.length > 0 ? others : undefined,
+      });
+      linesByPerson.set(assignment.participantId, lines);
+    }
+  }
+
+  return linesByPerson;
+}
+
+function calculateFoodSubtotals(
+  items: ReceiptItem[],
+  people: Person[],
+): {
+  foodCentsByPerson: number[];
+  itemLinesByPerson: PersonItemLine[][];
+} {
+  const foodCentsByPerson = people.map(() => 0);
+  const itemLinesByPerson: PersonItemLine[][] = people.map(() => []);
+  const indexById = new Map(people.map((person, index) => [person.id, index]));
+  const names = personNameMap(people);
+
+  for (const item of items) {
+    const assignments = computeItemAssignments(item);
+    const linesByPerson = buildItemLinesForAssignments(item, assignments, names);
+
+    for (const assignment of assignments) {
+      const personIndex = indexById.get(assignment.participantId);
+      if (personIndex === undefined) {
+        continue;
+      }
+
+      foodCentsByPerson[personIndex] += assignment.amountCents;
+    }
+
+    for (const [participantId, lines] of linesByPerson) {
+      const personIndex = indexById.get(participantId);
+      if (personIndex === undefined) {
+        continue;
+      }
+
+      itemLinesByPerson[personIndex].push(...lines);
+    }
+  }
+
+  return { foodCentsByPerson, itemLinesByPerson };
 }
 
 function calculateProportionalSplit(
@@ -268,13 +381,11 @@ function calculateProportionalSplit(
   people: Person[],
   tax: number,
   tip: number,
-  allowMultipleAssignees: boolean,
 ): Pick<SplitSession, "personTotals" | "summary"> {
-  const subtotal = round2(items.reduce((sum, item) => sum + item.price, 0));
-  const foodCentsByPerson = calculateFoodSubtotals(
+  const subtotal = calculateItemsSubtotal(items);
+  const { foodCentsByPerson, itemLinesByPerson } = calculateFoodSubtotals(
     items,
     people,
-    allowMultipleAssignees,
   );
 
   const taxCentsByPerson = distributeCents(toCents(tax), foodCentsByPerson);
@@ -287,6 +398,7 @@ function calculateProportionalSplit(
     foodCentsByPerson,
     taxCentsByPerson,
     tipCentsByPerson,
+    itemLinesByPerson,
   );
 
   const expectedTotal = round2(subtotal + tax + tip);
@@ -298,24 +410,24 @@ function calculateProportionalSplit(
   };
 }
 
-/** Itemized split: each item belongs to exactly one person. */
+/** Itemized split: units assigned individually (no shared pool). */
 export function calculateItemizedSplit(
   items: ReceiptItem[],
   people: Person[],
   tax: number,
   tip: number,
 ): Pick<SplitSession, "personTotals" | "summary"> {
-  return calculateProportionalSplit(items, people, tax, tip, false);
+  return calculateProportionalSplit(items, people, tax, tip);
 }
 
-/** Hybrid split: items can be shared across multiple people evenly. */
+/** Hybrid split: individual units plus optional shared pools. */
 export function calculateHybridSplit(
   items: ReceiptItem[],
   people: Person[],
   tax: number,
   tip: number,
 ): Pick<SplitSession, "personTotals" | "summary"> {
-  return calculateProportionalSplit(items, people, tax, tip, true);
+  return calculateProportionalSplit(items, people, tax, tip);
 }
 
 function formatMoney(amount: number): string {
@@ -336,13 +448,84 @@ export function validateParticipantName(name: string): string | null {
   return null;
 }
 
-export function validateItemFields(name: string, price: number): string | null {
+export function validateItemFields(
+  name: string,
+  totalPrice: number,
+  quantity = 1,
+): string | null {
   if (name.trim().length === 0) {
     return "Item name cannot be empty.";
   }
 
-  if (price <= 0) {
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    return "Quantity must be a whole number of at least 1.";
+  }
+
+  if (totalPrice <= 0) {
     return "Item price must be greater than $0.00.";
+  }
+
+  return null;
+}
+
+function validateItemAssignments(
+  mode: SplitSession["mode"],
+  item: ReceiptItem,
+): string | null {
+  if (!Number.isInteger(item.quantity) || item.quantity < 1) {
+    return `"${item.name}" must have a whole-number quantity of at least 1.`;
+  }
+
+  for (const allocation of item.individualAllocations) {
+    if (!Number.isInteger(allocation.quantity) || allocation.quantity < 0) {
+      return `"${item.name}" has an invalid individual quantity.`;
+    }
+  }
+
+  if (item.sharedAllocation) {
+    if (
+      !Number.isInteger(item.sharedAllocation.quantity) ||
+      item.sharedAllocation.quantity < 0
+    ) {
+      return `"${item.name}" has an invalid shared quantity.`;
+    }
+
+    if (
+      item.sharedAllocation.quantity > 0 &&
+      item.sharedAllocation.participantIds.length < 2 &&
+      mode === "hybrid"
+    ) {
+      // qty 1 with one person is represented as individual, not shared.
+      // Shared pool with 1 person is invalid for hybrid multi-share.
+      if (item.sharedAllocation.participantIds.length === 0) {
+        return `"${item.name}" shared units need at least one participant.`;
+      }
+      if (item.sharedAllocation.participantIds.length === 1) {
+        return `"${item.name}" needs at least two people to share units.`;
+      }
+    }
+  }
+
+  const assigned = assignedUnitCount(item);
+  if (assigned > item.quantity) {
+    return `"${item.name}" is over-assigned (${assigned} of ${item.quantity}).`;
+  }
+
+  if (remainingUnitCount(item) > 0) {
+    return `"${item.name}" still has ${remainingUnitCount(item)} unassigned ${
+      remainingUnitCount(item) === 1 ? "unit" : "units"
+    }.`;
+  }
+
+  if (mode === "itemized" && item.sharedAllocation?.quantity) {
+    return `"${item.name}" cannot use shared allocation in itemized mode.`;
+  }
+
+  if (mode === "itemized") {
+    const owners = item.individualAllocations.filter((a) => a.quantity > 0);
+    if (owners.length === 0) {
+      return `"${item.name}" is not assigned yet.`;
+    }
   }
 
   return null;
@@ -378,7 +561,7 @@ export function validateSplitInput(
     return "Add at least one receipt item before calculating.";
   }
 
-  const invalidPriceItem = items.find((item) => item.price <= 0);
+  const invalidPriceItem = items.find((item) => item.totalPrice <= 0);
   if (invalidPriceItem) {
     return `"${invalidPriceItem.name}" needs a price greater than $0.00.`;
   }
@@ -388,21 +571,26 @@ export function validateSplitInput(
     return "Every receipt item must have a name. Edit or remove blank items.";
   }
 
+  const badQuantity = items.find(
+    (item) => !Number.isInteger(item.quantity) || item.quantity < 1,
+  );
+  if (badQuantity) {
+    return `"${badQuantity.name}" must have a whole-number quantity of at least 1.`;
+  }
+
   // Even mode uses items for the bill total only — no per-item assignments.
   if (mode === "even") {
     return null;
   }
 
   for (const item of items) {
-    if (item.assignedTo.length === 0) {
-      return `"${item.name}" is not assigned yet. Tap a participant to assign it.`;
-    }
-
-    if (mode === "itemized" && item.assignedTo.length !== 1) {
-      return `"${item.name}" must be assigned to exactly one person in itemized mode.`;
+    const assignmentError = validateItemAssignments(mode, item);
+    if (assignmentError) {
+      return assignmentError;
     }
   }
 
+  void billTotal;
   return null;
 }
 
@@ -430,6 +618,18 @@ export function formatSessionShareText(session: SplitSession): string {
       `  Tip: ${formatMoney(person.tipShare)}`,
       `  Total: ${formatMoney(person.finalAmount)}`,
     );
+
+    if (person.itemLines && person.itemLines.length > 0) {
+      for (const line of person.itemLines) {
+        const shared =
+          line.sharedWithNames && line.sharedWithNames.length > 0
+            ? ` (shared with ${line.sharedWithNames.join(", ")})`
+            : "";
+        lines.push(
+          `  ${line.quantityLabel}  ${formatMoney(line.amount)}${shared}`,
+        );
+      }
+    }
   }
 
   lines.push(

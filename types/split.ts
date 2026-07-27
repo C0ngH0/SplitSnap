@@ -5,12 +5,35 @@ export type Person = {
   name: string;
 };
 
+export type ItemAllocation = {
+  participantId: string;
+  quantity: number;
+};
+
+export type SharedAllocation = {
+  quantity: number;
+  participantIds: string[];
+};
+
 export type ReceiptItem = {
   id: string;
   name: string;
-  price: number;
-  /** Person IDs this item is assigned to */
-  assignedTo: string[];
+  /** Positive whole number only (v1). */
+  quantity: number;
+  /** Derived/display; totalPrice is authoritative. */
+  unitPrice: number;
+  /** Authoritative receipt line amount. */
+  totalPrice: number;
+  individualAllocations: ItemAllocation[];
+  /** Hybrid shared pool; null when unused. */
+  sharedAllocation: SharedAllocation | null;
+};
+
+export type PersonItemLine = {
+  itemName: string;
+  quantityLabel: string;
+  amount: number;
+  sharedWithNames?: string[];
 };
 
 export type SplitMode = ApiSplitMode;
@@ -28,6 +51,7 @@ export type PersonTotal = {
   taxShare: number;
   tipShare: number;
   finalAmount: number;
+  itemLines?: PersonItemLine[];
 };
 
 export type ReceiptSummary = {
@@ -48,6 +72,10 @@ export type SplitSession = {
   updatedAt: string;
   restaurantName: string;
   paymentStatus?: PaymentStatus;
+  /** Durable S3 object key when the receipt was uploaded. */
+  receiptImageKey?: string | null;
+  /** Viewable URL (local file URI, public URL, or presigned). */
+  receiptImageUrl?: string | null;
   mode: SplitMode;
   people: Person[];
   items: ReceiptItem[];

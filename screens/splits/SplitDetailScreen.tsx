@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   EmptyState,
+  ReceiptPreviewSection,
   Screen,
   SummaryRow,
 } from "../../components";
@@ -187,6 +188,8 @@ export default function SplitDetailScreen({ navigation, route }: Props) {
         </Text>
       </View>
 
+      <ReceiptPreviewSection imageUrl={session.receiptImageUrl} />
+
       <Card style={styles.card}>
         <Text style={styles.cardTitle}>Receipt Summary</Text>
         <SummaryRow
@@ -226,6 +229,17 @@ export default function SplitDetailScreen({ navigation, route }: Props) {
               label="Food subtotal"
               value={formatCurrency(person.foodSubtotal)}
             />
+            {person.itemLines?.map((line, index) => (
+              <SummaryRow
+                key={`${person.personId}-${line.quantityLabel}-${index}`}
+                label={
+                  line.sharedWithNames && line.sharedWithNames.length > 0
+                    ? `${line.quantityLabel}\nShared with ${line.sharedWithNames.join(", ")}`
+                    : line.quantityLabel
+                }
+                value={formatCurrency(line.amount)}
+              />
+            ))}
             <SummaryRow
               label="Tax share"
               value={formatCurrency(person.taxShare)}
@@ -244,8 +258,12 @@ export default function SplitDetailScreen({ navigation, route }: Props) {
           {session.items.map((item) => (
             <SummaryRow
               key={item.id}
-              label={item.name}
-              value={formatCurrency(item.price)}
+              label={
+                item.quantity > 1
+                  ? `${item.name} (${item.quantity} × ${formatCurrency(item.unitPrice)})`
+                  : item.name
+              }
+              value={formatCurrency(item.totalPrice)}
             />
           ))}
         </Card>

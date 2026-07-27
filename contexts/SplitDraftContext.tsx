@@ -53,10 +53,26 @@ type SplitDraftContextValue = SplitDraftState & {
   addPerson: (name: string) => void;
   updatePerson: (personId: string, name: string) => void;
   removePerson: (personId: string) => void;
-  addItem: (name: string, price: string) => void;
-  updateItem: (itemId: string, name: string, price: string) => void;
+  addItem: (name: string, price: string, quantity?: string) => void;
+  updateItem: (
+    itemId: string,
+    name: string,
+    totalPrice: string,
+    options?: { quantity?: string; unitPrice?: string },
+  ) => void;
   removeItem: (itemId: string) => void;
   toggleAssignment: (itemId: string, personId: string) => void;
+  setIndividualQuantity: (
+    itemId: string,
+    personId: string,
+    quantity: number,
+  ) => void;
+  setSharedQuantity: (itemId: string, quantity: number) => void;
+  toggleSharedParticipant: (itemId: string, personId: string) => void;
+  updateExtractedItem: (
+    index: number,
+    item: import("../types/receipt").ExtractedReceiptItem,
+  ) => void;
   setBillTotal: (value: string) => void;
   setTax: (value: string) => void;
   setCustomTip: (value: string) => void;
@@ -133,19 +149,38 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
   );
 
   const addItem = useCallback(
-    (name: string, price: string) =>
+    (name: string, price: string, quantity = "1") =>
       dispatch({
         type: "ADD_ITEM",
         id: createId(),
         name,
-        price: parseAmount(price),
+        totalPrice: parseAmount(price),
+        quantity: Math.max(1, Math.floor(parseAmount(quantity) || 1)),
       }),
     [],
   );
 
   const updateItem = useCallback(
-    (itemId: string, name: string, price: string) =>
-      dispatch({ type: "UPDATE_ITEM", itemId, name, price: parseAmount(price) }),
+    (
+      itemId: string,
+      name: string,
+      totalPrice: string,
+      options?: { quantity?: string; unitPrice?: string },
+    ) =>
+      dispatch({
+        type: "UPDATE_ITEM",
+        itemId,
+        name,
+        totalPrice: parseAmount(totalPrice),
+        quantity:
+          options?.quantity !== undefined
+            ? Math.max(1, Math.floor(parseAmount(options.quantity) || 1))
+            : undefined,
+        unitPrice:
+          options?.unitPrice !== undefined
+            ? parseAmount(options.unitPrice)
+            : undefined,
+      }),
     [],
   );
 
@@ -157,6 +192,37 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
   const toggleAssignment = useCallback(
     (itemId: string, personId: string) =>
       dispatch({ type: "TOGGLE_ASSIGNMENT", itemId, personId }),
+    [],
+  );
+
+  const setIndividualQuantity = useCallback(
+    (itemId: string, personId: string, quantity: number) =>
+      dispatch({
+        type: "SET_INDIVIDUAL_QUANTITY",
+        itemId,
+        personId,
+        quantity,
+      }),
+    [],
+  );
+
+  const setSharedQuantity = useCallback(
+    (itemId: string, quantity: number) =>
+      dispatch({ type: "SET_SHARED_QUANTITY", itemId, quantity }),
+    [],
+  );
+
+  const toggleSharedParticipant = useCallback(
+    (itemId: string, personId: string) =>
+      dispatch({ type: "TOGGLE_SHARED_PARTICIPANT", itemId, personId }),
+    [],
+  );
+
+  const updateExtractedItem = useCallback(
+    (
+      index: number,
+      item: import("../types/receipt").ExtractedReceiptItem,
+    ) => dispatch({ type: "UPDATE_EXTRACTED_ITEM", index, item }),
     [],
   );
 
@@ -354,6 +420,9 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
         createdAt: state.session?.createdAt ?? now,
         updatedAt: now,
         restaurantName,
+        receiptImageKey: state.receiptImageKey,
+        receiptImageUrl:
+          state.receiptImageUrl || state.receiptImageUri || null,
         mode: state.mode,
         people: state.people,
         items: state.items,
@@ -379,6 +448,9 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
     state.mode,
     state.people,
     state.extractedReceipt,
+    state.receiptImageKey,
+    state.receiptImageUrl,
+    state.receiptImageUri,
     state.session,
     hasReceiptContext,
   ]);
@@ -478,6 +550,10 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
       updateItem,
       removeItem,
       toggleAssignment,
+      setIndividualQuantity,
+      setSharedQuantity,
+      toggleSharedParticipant,
+      updateExtractedItem,
       setBillTotal,
       setTax,
       setCustomTip,
@@ -511,6 +587,10 @@ export function SplitDraftProvider({ children }: { children: ReactNode }) {
       updateItem,
       removeItem,
       toggleAssignment,
+      setIndividualQuantity,
+      setSharedQuantity,
+      toggleSharedParticipant,
+      updateExtractedItem,
       setBillTotal,
       setTax,
       setCustomTip,

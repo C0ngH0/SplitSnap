@@ -8,6 +8,7 @@ import {
   receiptImageUpload,
   validateReceiptImageFile,
 } from "../services/receiptImageService";
+import { uploadReceiptImage } from "../services/receiptImageStorage";
 import { repairReceiptWithOpenAI } from "../services/openaiReceiptRepairService";
 import { parseReceiptFromTextract } from "../services/receiptParserService";
 import { extractReceiptWithTextract } from "../services/textractService";
@@ -21,6 +22,35 @@ const ocrRateLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many receipt OCR requests. Please try again later." },
 });
+
+async function attachReceiptImage(
+  file: Express.Multer.File,
+  payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  try {
+    const uploaded = await uploadReceiptImage({
+      buffer: file.buffer,
+      mimeType: file.mimetype,
+      originalName: file.originalname,
+    });
+
+    if (!uploaded) {
+      return payload;
+    }
+
+    return {
+      ...payload,
+      receiptImageKey: uploaded.key,
+      receiptImageUrl: uploaded.url,
+    };
+  } catch (uploadError) {
+    console.error(
+      "[receiptRoutes] Receipt image upload failed; continuing without persisted image:",
+      getSafeErrorDetails(uploadError),
+    );
+    return payload;
+  }
+}
 
 receiptRoutes.post(
   "/extract",
@@ -48,13 +78,14 @@ receiptRoutes.post(
         `[receiptRoutes] Received image (${validation.metadata.mimeType}, ${validation.metadata.sizeBytes} bytes)`,
       );
 
+      if (!req.file?.buffer) {
+        res.status(400).json({ error: "Uploaded image buffer is missing." });
+        return;
+      }
+
       const mockReceipt = await extractReceiptMock();
 
       try {
-        if (!req.file?.buffer) {
-          throw new Error("Uploaded image buffer is missing.");
-        }
-
         const textractResult = await extractReceiptWithTextract(
           req.file.buffer,
         );
@@ -79,13 +110,15 @@ receiptRoutes.post(
               parsedReceipt,
             });
 
-            res.json({
-              ...repairedReceipt,
-              detectedFields: textractResult.detectedFields,
-              confidenceScores: textractResult.confidenceScores,
-              ocrSource: textractResult.source,
-              extractionMethod: "textract-openai-repair",
-            });
+            res.json(
+              await attachReceiptImage(req.file, {
+                ...repairedReceipt,
+                detectedFields: textractResult.detectedFields,
+                confidenceScores: textractResult.confidenceScores,
+                ocrSource: textractResult.source,
+                extractionMethod: "textract-openai-repair",
+              }),
+            );
             return;
           } catch (openAIError) {
             console.error(
@@ -95,7 +128,7 @@ receiptRoutes.post(
           }
         }
 
-        res.json(extracted);
+        res.json(await attachReceiptImage(req.file, extracted));
         return;
       } catch (textractError) {
         console.error(
@@ -104,13 +137,15 @@ receiptRoutes.post(
         );
       }
 
-      res.json({
-        ...mockReceipt,
-        detectedFields: [],
-        confidenceScores: [],
-        ocrSource: "mock-fallback",
-        extractionMethod: "mock-fallback",
-      });
+      res.json(
+        await attachReceiptImage(req.file, {
+          ...mockReceipt,
+          detectedFields: [],
+          confidenceScores: [],
+          ocrSource: "mock-fallback",
+          extractionMethod: "mock-fallback",
+        }),
+      );
     } catch (error) {
       console.error(
         "[receiptRoutes] Receipt extraction failed:",

@@ -2,6 +2,8 @@ export type SplitMode = "even" | "itemized" | "hybrid";
 
 export type PaymentDtoStatus = "PENDING" | "COMPLETED" | "CANCELED";
 
+export type AllocationType = "INDIVIDUAL" | "SHARED";
+
 export type ParticipantDto = {
   id: string;
   displayName: string;
@@ -12,6 +14,7 @@ export type ItemAssignmentDto = {
   participantId: string;
   shareQuantity: number | null;
   amount: number | null;
+  allocationType?: AllocationType | null;
 };
 
 export type ReceiptItemDto = {
@@ -37,6 +40,8 @@ export type SplitSessionDto = {
   title: string;
   mode: SplitMode;
   restaurantName: string | null;
+  receiptImageKey?: string | null;
+  receiptImageUrl?: string | null;
   subtotal: number | null;
   tax: number | null;
   tip: number | null;
@@ -64,6 +69,7 @@ export type ItemAssignmentInput = {
   participantClientId?: string;
   participantLocalId?: string;
   shareQuantity?: number;
+  allocationType?: AllocationType;
   amount: number;
 };
 
@@ -95,6 +101,7 @@ export type CreateSplitSessionRequest = {
   title?: string;
   mode: SplitMode;
   restaurantName?: string;
+  receiptImageKey?: string;
   subtotal: number;
   tax: number;
   tip: number;

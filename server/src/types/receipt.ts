@@ -1,6 +1,8 @@
 export type ExtractedReceiptItem = {
   name: string;
-  price: number;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
 };
 
 export type ReceiptValidation = {
@@ -26,6 +28,10 @@ export type ExtractedReceipt = {
   validation?: ReceiptValidation;
   repairNotes?: string[];
   extractionMethod?: ExtractionMethod;
+  /** S3 object key when receipt image storage is configured. */
+  receiptImageKey?: string;
+  /** View URL (presigned or public) for the stored receipt image. */
+  receiptImageUrl?: string;
 };
 
 export type ReceiptImageMetadata = {
